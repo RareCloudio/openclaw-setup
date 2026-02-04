@@ -114,6 +114,27 @@ openclaw-security-check  # Run full security audit (11 checks)
 openclaw-backup          # Create backup (auto-runs daily at 3 AM)
 ```
 
+## Post-Install Verification
+
+After setup completes, verify all security layers are properly configured:
+
+```bash
+bash verify.sh
+```
+
+This runs 11 automated checks including:
+- OpenClaw installation and gateway status
+- Firewall configuration (nftables)
+- SSH hardening
+- fail2ban protection
+- Docker and AppArmor
+- File permissions and workspace setup
+
+Exit codes:
+- `0` - All checks passed ✅
+- `1` - Minor issues (warnings) ⚠️
+- `2` - Critical failures ❌
+
 ## Optional: WebUI via SSH Tunnel
 
 If you prefer using the Control UI instead of CLI:
