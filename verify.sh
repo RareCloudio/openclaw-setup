@@ -4,9 +4,11 @@
 
 set -euo pipefail
 
-echo "🔍 OpenClaw Setup Verification"
-echo "================================"
-echo ""
+# Parse flags
+QUIET=false
+if [[ "${1:-}" == "--quiet" ]] || [[ "${1:-}" == "-q" ]]; then
+    QUIET=true
+fi
 
 PASSED=0
 FAILED=0
@@ -14,7 +16,7 @@ WARNINGS=0
 
 # Helper functions
 pass() {
-    echo "✅ PASS: $1"
+    [[ "$QUIET" == "false" ]] && echo "✅ PASS: $1"
     ((PASSED++))
 }
 
@@ -24,14 +26,22 @@ fail() {
 }
 
 warn() {
-    echo "⚠️  WARN: $1"
+    [[ "$QUIET" == "false" ]] && echo "⚠️  WARN: $1"
     ((WARNINGS++))
 }
+
+# Header (skip in quiet mode)
+if [[ "$QUIET" == "false" ]]; then
+    echo "🔍 OpenClaw Setup Verification"
+    echo "================================"
+    echo "⏰ $(date '+%Y-%m-%d %H:%M:%S %Z')"
+    echo ""
+fi
 
 # ============================================================
 # 1. Check OpenClaw Installation
 # ============================================================
-echo "[1/11] Checking OpenClaw installation..."
+[[ "$QUIET" == "false" ]] && echo "[1/12] Checking OpenClaw installation..."
 if command -v openclaw &>/dev/null; then
     VERSION=$(openclaw --version 2>/dev/null || echo "unknown")
     pass "OpenClaw installed (version: $VERSION)"
@@ -42,7 +52,7 @@ fi
 # ============================================================
 # 2. Check OpenClaw User
 # ============================================================
-echo "[2/11] Checking openclaw user..."
+[[ "$QUIET" == "false" ]] && echo "[2/12] Checking openclaw user..."
 if id openclaw &>/dev/null; then
     pass "User 'openclaw' exists"
 else
@@ -52,7 +62,7 @@ fi
 # ============================================================
 # 3. Check Gateway Status
 # ============================================================
-echo "[3/11] Checking Gateway service..."
+[[ "$QUIET" == "false" ]] && echo "[3/12] Checking Gateway service..."
 if systemctl is-active --quiet openclaw-gateway; then
     pass "Gateway service is running"
 else
@@ -62,7 +72,7 @@ fi
 # ============================================================
 # 4. Check Gateway Binding
 # ============================================================
-echo "[4/11] Checking Gateway binding..."
+[[ "$QUIET" == "false" ]] && echo "[4/12] Checking Gateway binding..."
 if ss -tlnp | grep -q ":18789.*127.0.0.1"; then
     pass "Gateway bound to loopback only (127.0.0.1:18789)"
 elif ss -tlnp | grep -q ":18789.*0.0.0.0"; then
@@ -74,7 +84,7 @@ fi
 # ============================================================
 # 5. Check Firewall (nftables)
 # ============================================================
-echo "[5/11] Checking firewall..."
+[[ "$QUIET" == "false" ]] && echo "[5/12] Checking firewall..."
 if systemctl is-active --quiet nftables; then
     pass "nftables service is active"
     
@@ -91,7 +101,7 @@ fi
 # ============================================================
 # 6. Check fail2ban
 # ============================================================
-echo "[6/11] Checking fail2ban..."
+[[ "$QUIET" == "false" ]] && echo "[6/12] Checking fail2ban..."
 if systemctl is-active --quiet fail2ban; then
     pass "fail2ban service is active"
 else
@@ -101,7 +111,7 @@ fi
 # ============================================================
 # 7. Check SSH Configuration
 # ============================================================
-echo "[7/11] Checking SSH hardening..."
+[[ "$QUIET" == "false" ]] && echo "[7/12] Checking SSH hardening..."
 SSH_CONFIG="/etc/ssh/sshd_config"
 
 if grep -q "^PasswordAuthentication no" "$SSH_CONFIG"; then
@@ -120,7 +130,7 @@ fi
 # ============================================================
 # 8. Check Docker
 # ============================================================
-echo "[8/11] Checking Docker..."
+[[ "$QUIET" == "false" ]] && echo "[8/12] Checking Docker..."
 if systemctl is-active --quiet docker; then
     pass "Docker service is active"
     
@@ -137,7 +147,7 @@ fi
 # ============================================================
 # 9. Check AppArmor
 # ============================================================
-echo "[9/11] Checking AppArmor..."
+[[ "$QUIET" == "false" ]] && echo "[9/12] Checking AppArmor..."
 if systemctl is-active --quiet apparmor; then
     pass "AppArmor service is active"
 else
@@ -147,7 +157,7 @@ fi
 # ============================================================
 # 10. Check Workspace Permissions
 # ============================================================
-echo "[10/11] Checking workspace permissions..."
+[[ "$QUIET" == "false" ]] && echo "[10/12] Checking workspace permissions..."
 WORKSPACE="/home/openclaw/workspace"
 if [[ -d "$WORKSPACE" ]]; then
     OWNER=$(stat -c '%U' "$WORKSPACE")
@@ -163,7 +173,7 @@ fi
 # ============================================================
 # 11. Check Credentials Security
 # ============================================================
-echo "[11/11] Checking credentials security..."
+[[ "$QUIET" == "false" ]] && echo "[11/12] Checking credentials security..."
 CREDS_FILE="/opt/openclaw-setup/.credentials"
 if [[ -f "$CREDS_FILE" ]]; then
     PERMS=$(stat -c '%a' "$CREDS_FILE")
@@ -177,19 +187,33 @@ else
 fi
 
 # ============================================================
+# 12. Check Backup Cron
+# ============================================================
+[[ "$QUIET" == "false" ]] && echo "[12/12] Checking backup cron configuration..."
+if crontab -u openclaw -l 2>/dev/null | grep -q "openclaw-backup"; then
+    pass "Backup cron job configured for openclaw user"
+elif crontab -l 2>/dev/null | grep -q "openclaw-backup"; then
+    pass "Backup cron job configured (root)"
+else
+    warn "No backup cron job found - backups may not be automated"
+fi
+
+# ============================================================
 # Summary
 # ============================================================
-echo ""
-echo "================================"
-echo "📊 Verification Summary"
-echo "================================"
-echo "✅ Passed:   $PASSED"
-echo "❌ Failed:   $FAILED"
-echo "⚠️  Warnings: $WARNINGS"
-echo ""
+if [[ "$QUIET" == "false" ]]; then
+    echo ""
+    echo "================================"
+    echo "📊 Verification Summary"
+    echo "================================"
+    echo "✅ Passed:   $PASSED"
+    echo "❌ Failed:   $FAILED"
+    echo "⚠️  Warnings: $WARNINGS"
+    echo ""
+fi
 
 if [[ $FAILED -eq 0 ]]; then
-    echo "🎉 All critical checks passed!"
+    [[ "$QUIET" == "false" ]] && echo "🎉 All critical checks passed!"
     exit 0
 elif [[ $FAILED -le 2 ]]; then
     echo "⚠️  Minor issues detected. Review failed checks above."
