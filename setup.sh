@@ -1,26 +1,28 @@
 #!/usr/bin/env bash
-# openclaw-setup — Automated secure OpenClaw VPS setup
+# openclaw-setup — Automated secure OpenClaw VPS setup (CLI-only)
 # https://github.com/rarecloud/openclaw-setup
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/rarecloud/openclaw-setup/main/setup.sh | bash
 #
-# With custom credentials (for automation):
-#   bash setup.sh --webui-pass "mypass" --gateway-token "mytoken"
+# With custom token:
+#   bash setup.sh --gateway-token "mytoken"
 #
-# Architecture: OpenClaw runs NATIVELY on host (not in Docker).
-# Docker is used ONLY for OpenClaw's built-in agent sandbox.
-# This enables full browser tool support (headless Chromium).
+# Architecture:
+#   - OpenClaw runs NATIVELY on host (not in Docker)
+#   - Docker is used ONLY for OpenClaw's agent sandbox
+#   - Gateway binds to 127.0.0.1:18789 (loopback only, NOT exposed)
+#   - Access via SSH + CLI commands
+#   - Optional: SSH tunnel for Control UI (http://localhost:18789)
 #
-# Security: 8-layer hardening model
-#   1. nftables firewall (ports 22 + 443 only)
-#   2. fail2ban (SSH + nginx brute-force protection)
-#   3. nginx TLS reverse proxy + rate limiting
-#   4. nginx basic-auth
-#   5. OpenClaw gateway token
-#   6. AppArmor process confinement
-#   7. Docker sandbox (agent code execution isolation)
-#   8. systemd hardening (NoNewPrivileges, ProtectSystem, etc.)
+# Security: 7-layer hardening model
+#   1. nftables firewall (custom SSH port ONLY)
+#   2. fail2ban (SSH brute-force protection)
+#   3. SSH hardening (key-only auth, no password)
+#   4. OpenClaw gateway token auth
+#   5. AppArmor process confinement
+#   6. Docker sandbox (agent code execution isolation)
+#   7. systemd hardening (NoNewPrivileges, ProtectSystem, etc.)
 
 set -euo pipefail
 
@@ -29,32 +31,29 @@ set -euo pipefail
 # ============================================================
 OPENCLAW_USER="openclaw"
 OPENCLAW_HOME="/home/${OPENCLAW_USER}"
-OPENCLAW_CONFIG_DIR="${OPENCLAW_HOME}/.clawdbot"
-OPENCLAW_WORKSPACE="${OPENCLAW_HOME}/clawd"
+OPENCLAW_CONFIG_DIR="${OPENCLAW_HOME}/.openclaw"
+OPENCLAW_WORKSPACE="${OPENCLAW_HOME}/workspace"
 SETUP_LOG="/var/log/openclaw-setup.log"
 PROVISIONED_FLAG="/opt/openclaw-setup/.provisioned"
 
 # Defaults (overridable via CLI args)
-WEBUI_USER="admin"
-WEBUI_PASS=""
 GATEWAY_TOKEN=""
+SSH_PORT="41722"
 
 # ============================================================
 # Parse arguments
 # ============================================================
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --webui-user)  WEBUI_USER="$2"; shift 2 ;;
-        --webui-pass)  WEBUI_PASS="$2"; shift 2 ;;
         --gateway-token) GATEWAY_TOKEN="$2"; shift 2 ;;
+        --ssh-port)      SSH_PORT="$2"; shift 2 ;;
         --help|-h)
             echo "Usage: bash setup.sh [OPTIONS]"
             echo ""
             echo "Options:"
-            echo "  --webui-user USER     WebUI username (default: admin)"
-            echo "  --webui-pass PASS     WebUI password (generated if empty)"
-            echo "  --gateway-token TOKEN Gateway token (generated if empty)"
-            echo "  --help                Show this help"
+            echo "  --gateway-token TOKEN  Gateway token (generated if empty)"
+            echo "  --ssh-port PORT        SSH port (default: 41722)"
+            echo "  --help                 Show this help"
             exit 0
             ;;
         *) echo "Unknown option: $1"; exit 1 ;;
@@ -78,28 +77,41 @@ fi
 exec > >(tee -a "${SETUP_LOG}") 2>&1
 
 echo "[openclaw-setup] ============================================"
-echo "[openclaw-setup] OpenClaw Secure VPS Setup"
+echo "[openclaw-setup] OpenClaw Secure VPS Setup (CLI-only)"
 echo "[openclaw-setup] Started: $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 echo "[openclaw-setup] ============================================"
 
 export DEBIAN_FRONTEND=noninteractive
 
+# Fix locale warnings
+export LC_ALL=C.UTF-8
+export LANG=C.UTF-8
+
 # ============================================================
 # Generate credentials if not provided
 # ============================================================
-if [[ -z "${WEBUI_PASS}" ]]; then
-    WEBUI_PASS=$(openssl rand -base64 16 | tr -d '=+/')
-    echo "[openclaw-setup] Generated random WebUI password."
-fi
-
 if [[ -z "${GATEWAY_TOKEN}" ]]; then
     GATEWAY_TOKEN=$(openssl rand -hex 32)
     echo "[openclaw-setup] Generated random gateway token."
 fi
 
-VPS_IP=$(ip -4 route get 1.1.1.1 | awk '{print $7; exit}')
-HOSTNAME_FQDN=$(hostname -f 2>/dev/null || echo "${VPS_IP}")
+# Validate token (alphanumeric, minimum 32 characters for security)
+if [[ ! "${GATEWAY_TOKEN}" =~ ^[a-zA-Z0-9]+$ ]]; then
+    echo "[openclaw-setup] ERROR: Gateway token must be alphanumeric only."
+    exit 1
+fi
+if [[ ${#GATEWAY_TOKEN} -lt 32 ]]; then
+    echo "[openclaw-setup] ERROR: Gateway token must be at least 32 characters for security."
+    exit 1
+fi
 
+# Validate SSH port
+if [[ ! "${SSH_PORT}" =~ ^[0-9]+$ ]] || [[ "${SSH_PORT}" -lt 1024 ]] || [[ "${SSH_PORT}" -gt 65535 ]]; then
+    echo "[openclaw-setup] ERROR: SSH port must be a number between 1024 and 65535."
+    exit 1
+fi
+
+VPS_IP=$(ip -4 route get 1.1.1.1 | awk '{print $7; exit}')
 echo "[openclaw-setup] VPS IP: ${VPS_IP}"
 
 # ============================================================
@@ -109,26 +121,22 @@ echo "[openclaw-setup] Installing system dependencies..."
 apt-get update -qq
 apt-get install -y -qq \
     curl wget git jq htop \
-    nginx certbot python3-certbot-nginx \
     nftables fail2ban \
-    apache2-utils \
     unattended-upgrades apt-listchanges \
     ca-certificates gnupg openssl \
-    apparmor apparmor-utils
+    apparmor apparmor-utils \
+    python3 iproute2
 
 # ============================================================
-# 2. Install headless Chromium (for browser tool)
+# 2. Install Google Chrome (headless browser for web tools)
 # ============================================================
-echo "[openclaw-setup] Installing headless Chromium..."
-apt-get install -y -qq \
-    chromium chromium-sandbox \
-    fonts-liberation fonts-noto-color-emoji \
-    libatk-bridge2.0-0 libatk1.0-0 libcups2 libdrm2 libgbm1 \
-    libnss3 libxcomposite1 libxdamage1 libxrandr2 xdg-utils \
-    2>/dev/null || {
-    apt-get install -y -qq chromium-browser 2>/dev/null || \
-        echo "[openclaw-setup] WARNING: Could not install Chromium. Browser tool will be unavailable."
-}
+echo "[openclaw-setup] Installing Google Chrome..."
+if ! command -v google-chrome &>/dev/null; then
+    wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb -O /tmp/chrome.deb
+    apt-get install -y -qq /tmp/chrome.deb
+    rm -f /tmp/chrome.deb
+fi
+echo "[openclaw-setup] Chrome $(google-chrome --version) installed."
 
 # ============================================================
 # 3. Install Node.js 22
@@ -163,130 +171,180 @@ systemctl enable containerd.service
 echo "[openclaw-setup] Creating openclaw user..."
 useradd -r -m -s /bin/bash -d "${OPENCLAW_HOME}" "${OPENCLAW_USER}" 2>/dev/null || true
 usermod -aG docker "${OPENCLAW_USER}"
-mkdir -p "${OPENCLAW_CONFIG_DIR}"
-mkdir -p "${OPENCLAW_WORKSPACE}"/{documents,skills,memory,sessions,logs}
-mkdir -p "${OPENCLAW_HOME}/workspace"
+mkdir -p "${OPENCLAW_WORKSPACE}"
 chown -R "${OPENCLAW_USER}:${OPENCLAW_USER}" "${OPENCLAW_HOME}"
 
 # ============================================================
 # 6. Install OpenClaw
 # ============================================================
 echo "[openclaw-setup] Installing OpenClaw (latest)..."
-npm install -g moltbot@latest || {
-    echo "[openclaw-setup] npm install failed, trying curl installer..."
-    su - "${OPENCLAW_USER}" -c 'curl -fsSL https://molt.bot/install.sh | bash' || true
-}
+npm install -g openclaw@latest
+
+if ! command -v openclaw &>/dev/null; then
+    echo "[openclaw-setup] ERROR: openclaw binary not found after install."
+    exit 1
+fi
+echo "[openclaw-setup] OpenClaw $(openclaw --version) installed."
 
 # Pre-pull sandbox Docker image
 echo "[openclaw-setup] Pre-pulling sandbox image..."
 docker pull node:22-bookworm-slim || echo "[openclaw-setup] WARNING: Could not pre-pull sandbox image."
 
 # ============================================================
-# 7. Configure OpenClaw
+# 7. Configure OpenClaw (non-interactive onboard)
 # ============================================================
-echo "[openclaw-setup] Writing OpenClaw configuration..."
-cat > "${OPENCLAW_CONFIG_DIR}/clawdbot.json" <<OCCONFIG
-{
-  "gateway": {
-    "bind": "loopback",
-    "port": 18789,
-    "token": "${GATEWAY_TOKEN}"
-  },
-  "agents": {
-    "defaults": {
-      "workspace": "${OPENCLAW_WORKSPACE}",
-      "sandbox": {
-        "mode": "non-main",
-        "scope": "agent",
-        "workspaceAccess": "rw",
-        "docker": {
-          "image": "moltbot-sandbox:bookworm-slim",
-          "network": "none",
-          "readOnlyRoot": true,
-          "user": "1000:1000",
-          "capDrop": ["ALL"],
-          "memory": "1g",
-          "cpus": 1,
-          "pidsLimit": 256
-        }
-      },
-      "tools": {
-        "allow": ["read", "write", "edit", "bash", "web_search", "browser"],
-        "deny": ["cron", "gateway", "nodes", "canvas"]
-      }
-    }
-  },
-  "channels": {
-    "telegram": {
-      "groups": { "*": { "requireMention": true } }
-    },
-    "whatsapp": {
-      "groups": { "*": { "requireMention": true } }
-    }
-  },
-  "messages": {
-    "groupChat": {
-      "mentionPatterns": ["@openclaw", "@bot"]
-    }
-  }
-}
-OCCONFIG
-chown "${OPENCLAW_USER}:${OPENCLAW_USER}" "${OPENCLAW_CONFIG_DIR}/clawdbot.json"
-chmod 600 "${OPENCLAW_CONFIG_DIR}/clawdbot.json"
+echo "[openclaw-setup] Running non-interactive onboard..."
+su - "${OPENCLAW_USER}" -c "openclaw onboard \
+    --non-interactive \
+    --accept-risk \
+    --workspace ${OPENCLAW_WORKSPACE} \
+    --mode local \
+    --gateway-bind loopback \
+    --gateway-port 18789 \
+    --gateway-auth token \
+    --gateway-token ${GATEWAY_TOKEN} \
+    --skip-daemon \
+    --skip-channels \
+    --skip-skills \
+    --skip-health \
+    --skip-ui" 2>&1 || true
 
-# Environment file
+# Enable channel plugins
+echo "[openclaw-setup] Enabling channel plugins..."
+su - "${OPENCLAW_USER}" -c "openclaw plugins enable whatsapp" 2>&1 || true
+su - "${OPENCLAW_USER}" -c "openclaw plugins enable telegram" 2>&1 || true
+su - "${OPENCLAW_USER}" -c "openclaw plugins enable discord" 2>&1 || true
+su - "${OPENCLAW_USER}" -c "openclaw plugins enable slack" 2>&1 || true
+su - "${OPENCLAW_USER}" -c "openclaw plugins enable signal" 2>&1 || true
+
+# Create credentials directory
+mkdir -p "${OPENCLAW_CONFIG_DIR}/credentials"
+chown "${OPENCLAW_USER}:${OPENCLAW_USER}" "${OPENCLAW_CONFIG_DIR}/credentials"
+chmod 700 "${OPENCLAW_CONFIG_DIR}/credentials"
+
+# ============================================================
+# 8. Patch openclaw.json
+# ============================================================
+echo "[openclaw-setup] Configuring openclaw.json..."
+OPENCLAW_JSON="${OPENCLAW_CONFIG_DIR}/openclaw.json"
+
+python3 -c "
+import json
+
+config_path = '${OPENCLAW_JSON}'
+try:
+    with open(config_path) as f:
+        config = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    config = {}
+
+gw = config.setdefault('gateway', {})
+gw['mode'] = 'local'
+gw['bind'] = 'loopback'
+gw['port'] = 18789
+
+auth = gw.setdefault('auth', {})
+auth['mode'] = 'token'
+auth['token'] = '${GATEWAY_TOKEN}'
+auth['allowTailscale'] = False
+
+# Control UI enabled for SSH tunnel access
+ui = gw.setdefault('controlUi', {})
+ui['enabled'] = True
+
+with open(config_path, 'w') as f:
+    json.dump(config, f, indent=2)
+    f.write('\n')
+
+print('[openclaw-setup] openclaw.json configured.')
+"
+
+chown "${OPENCLAW_USER}:${OPENCLAW_USER}" "${OPENCLAW_JSON}"
+chmod 600 "${OPENCLAW_JSON}"
+
+# Create .env for environment variables
 cat > "${OPENCLAW_HOME}/.env" <<ENVFILE
 # OpenClaw Environment — $(date -u +"%Y-%m-%dT%H:%M:%SZ")
 # DO NOT SHARE THIS FILE
 
-# Gateway
-CLAWDBOT_GATEWAY_TOKEN=${GATEWAY_TOKEN}
-CLAWDBOT_GATEWAY_BIND=loopback
-
-# Browser tool (headless Chromium)
-PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+# Browser tool (Google Chrome headless)
+PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome
 PUPPETEER_SKIP_DOWNLOAD=true
 
 # LLM API Keys — add your own:
 # ANTHROPIC_API_KEY=sk-ant-...
 # OPENAI_API_KEY=sk-...
 
-# Channel Tokens — add your own:
+# Channel Tokens:
 # TELEGRAM_BOT_TOKEN=...
 
-# Runtime
-CLAWDBOT_LOG_LEVEL=info
 NODE_ENV=production
 ENVFILE
 chown "${OPENCLAW_USER}:${OPENCLAW_USER}" "${OPENCLAW_HOME}/.env"
 chmod 600 "${OPENCLAW_HOME}/.env"
 
-# Default SOUL.md
-cat > "${OPENCLAW_WORKSPACE}/SOUL.md" <<'SOUL'
-# OpenClaw Personality
+# ============================================================
+# 9. Hardening — SSH (custom port + hardening) — BEFORE firewall!
+# ============================================================
+echo "[openclaw-setup] Hardening SSH (port ${SSH_PORT})..."
 
-You are a helpful AI assistant.
+# Ubuntu 24.04 uses systemd socket activation for SSH
+# We need to modify BOTH sshd_config AND the systemd socket unit
 
-## Traits
-- Professional and efficient
-- Clear and concise in responses
-- Cautious with sensitive operations
-- Always asks for confirmation before destructive actions
+# Change SSH port in sshd_config
+sed -i "s/^#\?Port.*/Port ${SSH_PORT}/" /etc/ssh/sshd_config
+grep -q "^Port" /etc/ssh/sshd_config || echo "Port ${SSH_PORT}" >> /etc/ssh/sshd_config
 
-## Guidelines
-- Never share API keys, credentials, or tokens
-- Explain what you're about to do before doing it
-- If unsure, ask for clarification
-- Respect user privacy
-- Do not access files outside ~/clawd without explicit permission
-SOUL
-chown "${OPENCLAW_USER}:${OPENCLAW_USER}" "${OPENCLAW_WORKSPACE}/SOUL.md"
+# Hardening settings
+sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config
+sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
+sed -i 's/^#\?X11Forwarding.*/X11Forwarding no/' /etc/ssh/sshd_config
+sed -i 's/^#\?MaxAuthTries.*/MaxAuthTries 3/' /etc/ssh/sshd_config
+sed -i 's/^#\?AllowTcpForwarding.*/AllowTcpForwarding yes/' /etc/ssh/sshd_config
+sed -i 's/^#\?AllowAgentForwarding.*/AllowAgentForwarding no/' /etc/ssh/sshd_config
+
+grep -q "^ClientAliveInterval" /etc/ssh/sshd_config || echo "ClientAliveInterval 300" >> /etc/ssh/sshd_config
+grep -q "^ClientAliveCountMax" /etc/ssh/sshd_config || echo "ClientAliveCountMax 2" >> /etc/ssh/sshd_config
+grep -q "^LoginGraceTime" /etc/ssh/sshd_config || echo "LoginGraceTime 30" >> /etc/ssh/sshd_config
+grep -q "^Ciphers" /etc/ssh/sshd_config || \
+    echo "Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com" >> /etc/ssh/sshd_config
+grep -q "^MACs" /etc/ssh/sshd_config || \
+    echo "MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com" >> /etc/ssh/sshd_config
+
+# Ubuntu 24.04: Disable socket activation, use traditional sshd instead
+# Socket activation complicates port changes and can cause issues
+if systemctl is-enabled --quiet ssh.socket 2>/dev/null; then
+    echo "[openclaw-setup] Disabling SSH socket activation for reliable port change..."
+    systemctl stop ssh.socket 2>/dev/null || true
+    systemctl disable ssh.socket 2>/dev/null || true
+    # Mask it to prevent re-enabling
+    systemctl mask ssh.socket 2>/dev/null || true
+fi
+
+# Now restart SSH service (which reads Port from sshd_config)
+echo "[openclaw-setup] Restarting SSH service on port ${SSH_PORT}..."
+systemctl restart ssh.service || systemctl restart sshd.service || systemctl restart ssh || systemctl restart sshd
+
+# Verify SSH is listening on new port before applying firewall
+sleep 2
+if ! ss -tlnp | grep -q ":${SSH_PORT}"; then
+    echo "[openclaw-setup] ERROR: SSH not listening on port ${SSH_PORT}. Aborting to prevent lockout."
+    exit 1
+fi
+echo "[openclaw-setup] SSH now listening on port ${SSH_PORT}"
 
 # ============================================================
-# 8. Hardening — nftables firewall
+# 10. Hardening — nftables firewall (SSH ONLY on custom port)
 # ============================================================
-echo "[openclaw-setup] Configuring nftables firewall..."
-cat > /etc/nftables.conf <<'NFT'
+echo "[openclaw-setup] Configuring nftables firewall (SSH on port ${SSH_PORT} only)..."
+
+# Disable ufw if present (conflicts with nftables)
+if command -v ufw &>/dev/null; then
+    ufw disable 2>/dev/null || true
+    systemctl disable ufw 2>/dev/null || true
+fi
+
+cat > /etc/nftables.conf <<NFT
 #!/usr/sbin/nft -f
 flush ruleset
 
@@ -297,8 +355,7 @@ table inet filter {
         ct state established,related accept
         ip protocol icmp icmp type echo-request limit rate 5/second accept
         ip6 nexthdr icmpv6 icmpv6 type echo-request limit rate 5/second accept
-        tcp dport 22 ct state new limit rate 10/minute accept
-        tcp dport 443 ct state new accept
+        tcp dport ${SSH_PORT} ct state new limit rate 10/minute accept
         limit rate 5/minute log prefix "[nftables-drop] " drop
     }
     chain forward {
@@ -313,31 +370,13 @@ table inet filter {
 }
 NFT
 systemctl enable nftables.service
+systemctl start nftables.service
 
 # ============================================================
-# 9. Hardening — SSH
-# ============================================================
-echo "[openclaw-setup] Hardening SSH..."
-sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config
-sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
-sed -i 's/^#\?X11Forwarding.*/X11Forwarding no/' /etc/ssh/sshd_config
-sed -i 's/^#\?MaxAuthTries.*/MaxAuthTries 3/' /etc/ssh/sshd_config
-sed -i 's/^#\?AllowTcpForwarding.*/AllowTcpForwarding local/' /etc/ssh/sshd_config
-sed -i 's/^#\?AllowAgentForwarding.*/AllowAgentForwarding no/' /etc/ssh/sshd_config
-
-grep -q "^ClientAliveInterval" /etc/ssh/sshd_config || echo "ClientAliveInterval 300" >> /etc/ssh/sshd_config
-grep -q "^ClientAliveCountMax" /etc/ssh/sshd_config || echo "ClientAliveCountMax 2" >> /etc/ssh/sshd_config
-grep -q "^LoginGraceTime" /etc/ssh/sshd_config || echo "LoginGraceTime 30" >> /etc/ssh/sshd_config
-grep -q "^Ciphers" /etc/ssh/sshd_config || \
-    echo "Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com" >> /etc/ssh/sshd_config
-grep -q "^MACs" /etc/ssh/sshd_config || \
-    echo "MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com" >> /etc/ssh/sshd_config
-
-# ============================================================
-# 10. Hardening — fail2ban
+# 11. Hardening — fail2ban (SSH on custom port)
 # ============================================================
 echo "[openclaw-setup] Configuring fail2ban..."
-cat > /etc/fail2ban/jail.local <<'F2B'
+cat > /etc/fail2ban/jail.local <<F2B
 [DEFAULT]
 bantime = 3600
 findtime = 600
@@ -346,35 +385,15 @@ backend = systemd
 
 [sshd]
 enabled = true
-port = ssh
+port = ${SSH_PORT}
 maxretry = 3
 bantime = 7200
-
-[nginx-http-auth]
-enabled = true
-port = https
-logpath = /var/log/nginx/openclaw-error.log
-maxretry = 5
-bantime = 3600
-
-[nginx-limit-req]
-enabled = true
-port = https
-logpath = /var/log/nginx/openclaw-error.log
-maxretry = 10
-bantime = 600
-
-[nginx-botsearch]
-enabled = true
-port = https
-logpath = /var/log/nginx/openclaw-access.log
-maxretry = 2
-bantime = 86400
 F2B
 systemctl enable fail2ban.service
+systemctl restart fail2ban.service
 
 # ============================================================
-# 11. Hardening — automatic security updates
+# 12. Hardening — automatic security updates
 # ============================================================
 echo "[openclaw-setup] Enabling automatic security updates..."
 cat > /etc/apt/apt.conf.d/20auto-upgrades <<'APT'
@@ -392,7 +411,7 @@ Unattended-Upgrade::Remove-Unused-Dependencies "true";
 APT
 
 # ============================================================
-# 12. Hardening — kernel (sysctl)
+# 13. Hardening — kernel (sysctl)
 # ============================================================
 echo "[openclaw-setup] Applying kernel hardening..."
 cat > /etc/sysctl.d/99-openclaw-hardening.conf <<'SYSCTL'
@@ -422,7 +441,7 @@ SYSCTL
 sysctl --system >/dev/null 2>&1
 
 # ============================================================
-# 13. Hardening — Docker daemon
+# 14. Hardening — Docker daemon
 # ============================================================
 echo "[openclaw-setup] Hardening Docker daemon..."
 mkdir -p /etc/docker
@@ -443,9 +462,10 @@ cat > /etc/docker/daemon.json <<'DOCKERCFG'
     }
 }
 DOCKERCFG
+systemctl restart docker
 
 # ============================================================
-# 14. Hardening — disable unnecessary services + packages
+# 15. Hardening — disable unnecessary services
 # ============================================================
 echo "[openclaw-setup] Disabling unnecessary services..."
 for svc in avahi-daemon cups bluetooth snapd; do
@@ -458,34 +478,33 @@ grep -q "^umask 027" /etc/profile || echo "umask 027" >> /etc/profile
 echo "* hard core 0" >> /etc/security/limits.conf
 
 # ============================================================
-# 15. Hardening — AppArmor profile
+# 16. Hardening — AppArmor profile
 # ============================================================
 echo "[openclaw-setup] Installing AppArmor profile..."
-cat > /etc/apparmor.d/usr.bin.moltbot <<'APPARMOR'
+OPENCLAW_BIN=$(which openclaw)
+cat > /etc/apparmor.d/usr.bin.openclaw <<APPARMOR
 #include <tunables/global>
 
-/usr/bin/moltbot {
+${OPENCLAW_BIN} {
   #include <abstractions/base>
   #include <abstractions/nameservice>
   #include <abstractions/ssl_certs>
 
-  /usr/bin/moltbot mr,
+  ${OPENCLAW_BIN} mr,
   /usr/bin/node mrix,
   /usr/lib/node_modules/** r,
   /usr/local/lib/node_modules/** r,
 
   owner /home/openclaw/ r,
   owner /home/openclaw/** rwk,
-  owner /home/openclaw/.clawdbot/** rw,
-  owner /home/openclaw/clawd/** rw,
+  owner /home/openclaw/.openclaw/** rw,
   owner /home/openclaw/workspace/** rw,
   owner /home/openclaw/.env r,
 
-  /usr/bin/chromium mrix,
-  /usr/bin/chromium-browser mrix,
-  /usr/lib/chromium/** mr,
-  /usr/share/chromium/** r,
-  owner /home/openclaw/.cache/chromium/** rwk,
+  /usr/bin/google-chrome mrix,
+  /usr/bin/google-chrome-stable mrix,
+  /opt/google/chrome/** mr,
+  owner /home/openclaw/.cache/google-chrome/** rwk,
   owner /tmp/.org.chromium.* rwk,
 
   /usr/bin/docker mrix,
@@ -514,95 +533,18 @@ cat > /etc/apparmor.d/usr.bin.moltbot <<'APPARMOR'
   deny /boot/** rwx,
 }
 APPARMOR
-apparmor_parser -r /etc/apparmor.d/usr.bin.moltbot 2>/dev/null || \
+apparmor_parser -r /etc/apparmor.d/usr.bin.openclaw 2>/dev/null || \
     echo "[openclaw-setup] WARNING: Could not load AppArmor profile (will load at next boot)."
-
-# ============================================================
-# 16. Nginx reverse proxy + TLS + basic-auth
-# ============================================================
-echo "[openclaw-setup] Configuring nginx reverse proxy..."
-
-# Basic auth
-htpasswd -bc /etc/nginx/.htpasswd "${WEBUI_USER}" "${WEBUI_PASS}"
-chmod 640 /etc/nginx/.htpasswd
-chown root:www-data /etc/nginx/.htpasswd
-
-# Self-signed TLS cert
-mkdir -p /etc/nginx/ssl
-openssl req -x509 -nodes -days 3650 \
-    -newkey rsa:2048 \
-    -keyout /etc/nginx/ssl/openclaw.key \
-    -out /etc/nginx/ssl/openclaw.crt \
-    -subj "/CN=${HOSTNAME_FQDN}/O=OpenClaw/C=US" 2>/dev/null
-
-# Nginx config
-cat > /etc/nginx/sites-available/openclaw <<NGINX
-limit_req_zone \$binary_remote_addr zone=openclaw:10m rate=10r/s;
-limit_conn_zone \$binary_remote_addr zone=openclaw_conn:10m;
-
-server {
-    listen 443 ssl http2;
-    server_name ${HOSTNAME_FQDN} ${VPS_IP};
-
-    ssl_certificate /etc/nginx/ssl/openclaw.crt;
-    ssl_certificate_key /etc/nginx/ssl/openclaw.key;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
-    ssl_prefer_server_ciphers on;
-    ssl_session_cache shared:SSL:10m;
-
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-XSS-Protection "1; mode=block" always;
-    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' wss:" always;
-
-    limit_req zone=openclaw burst=20 nodelay;
-    limit_conn openclaw_conn 20;
-
-    auth_basic "OpenClaw WebUI";
-    auth_basic_user_file /etc/nginx/.htpasswd;
-
-    location / {
-        proxy_pass http://127.0.0.1:18789;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_read_timeout 86400;
-        proxy_send_timeout 86400;
-        proxy_buffering off;
-    }
-
-    location ~ /\\. { deny all; }
-
-    access_log /var/log/nginx/openclaw-access.log;
-    error_log /var/log/nginx/openclaw-error.log;
-}
-
-server {
-    listen 80;
-    server_name ${HOSTNAME_FQDN} ${VPS_IP};
-    return 301 https://\$host\$request_uri;
-}
-NGINX
-
-rm -f /etc/nginx/sites-enabled/default
-ln -sf /etc/nginx/sites-available/openclaw /etc/nginx/sites-enabled/openclaw
-nginx -t && systemctl restart nginx
 
 # ============================================================
 # 17. Systemd service for OpenClaw gateway
 # ============================================================
 echo "[openclaw-setup] Creating systemd service..."
+OPENCLAW_BIN=$(which openclaw)
 cat > /etc/systemd/system/openclaw-gateway.service <<SVCFILE
 [Unit]
 Description=OpenClaw Gateway - AI Assistant
-Documentation=https://docs.molt.bot
+Documentation=https://docs.openclaw.ai
 After=network-online.target docker.service
 Wants=network-online.target docker.service
 
@@ -612,8 +554,7 @@ User=${OPENCLAW_USER}
 Group=${OPENCLAW_USER}
 WorkingDirectory=${OPENCLAW_HOME}
 EnvironmentFile=${OPENCLAW_HOME}/.env
-ExecStart=/usr/bin/moltbot gateway
-ExecReload=/bin/kill -HUP \$MAINPID
+ExecStart=${OPENCLAW_BIN} gateway --port 18789 --bind loopback
 Restart=always
 RestartSec=10
 StandardOutput=journal
@@ -624,6 +565,7 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
 ReadWritePaths=${OPENCLAW_HOME}
+ReadWritePaths=/tmp
 PrivateTmp=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
@@ -638,75 +580,76 @@ systemctl enable openclaw-gateway.service
 systemctl start openclaw-gateway.service
 
 echo "[openclaw-setup] Waiting for gateway to start..."
+GATEWAY_UP=false
 for i in $(seq 1 30); do
-    if curl -sf http://127.0.0.1:18789/health >/dev/null 2>&1; then
+    if curl -sf http://127.0.0.1:18789/ >/dev/null 2>&1; then
         echo "[openclaw-setup] Gateway is running."
+        GATEWAY_UP=true
         break
     fi
     sleep 2
 done
+if [[ "${GATEWAY_UP}" != "true" ]]; then
+    echo "[openclaw-setup] WARNING: Gateway did not start within 60s. Check: journalctl -u openclaw-gateway"
+fi
 
 # ============================================================
 # 18. Install helper scripts
 # ============================================================
 echo "[openclaw-setup] Installing helper scripts..."
 
-# Download helpers if available, otherwise install inline
-HELPERS_URL="https://raw.githubusercontent.com/rarecloud/openclaw-setup/main/helpers.sh"
-if curl -fsSL "${HELPERS_URL}" -o /tmp/openclaw-helpers.sh 2>/dev/null; then
-    bash /tmp/openclaw-helpers.sh
-    rm -f /tmp/openclaw-helpers.sh
-else
-    # Inline fallback
-    cat > /usr/local/bin/openclaw-status <<'HELPER'
+cat > /usr/local/bin/openclaw-status <<'HELPER'
 #!/bin/bash
 echo "=== OpenClaw Gateway ==="
 systemctl status openclaw-gateway --no-pager -l
 echo ""
 echo "=== Health ==="
-curl -s http://127.0.0.1:18789/health 2>/dev/null || echo "Not responding"
+curl -s http://127.0.0.1:18789/ -o /dev/null -w "HTTP %{http_code}\n" 2>/dev/null || echo "Not responding"
 echo ""
 echo "=== Logs (last 20) ==="
 journalctl -u openclaw-gateway -n 20 --no-pager
 HELPER
-    chmod +x /usr/local/bin/openclaw-status
+chmod +x /usr/local/bin/openclaw-status
 
-    cat > /usr/local/bin/openclaw-backup <<'HELPER'
+cat > /usr/local/bin/openclaw-backup <<'HELPER'
 #!/bin/bash
 BACKUP_DIR="${1:-/var/backups/openclaw}"
 DATE=$(date +%Y%m%d-%H%M%S)
 mkdir -p "$BACKUP_DIR"
 tar -czf "$BACKUP_DIR/openclaw-$DATE.tar.gz" \
-    /home/openclaw/.clawdbot /home/openclaw/clawd /home/openclaw/.env 2>/dev/null
+    /home/openclaw/.openclaw /home/openclaw/workspace /home/openclaw/.env 2>/dev/null
 echo "Backup: $BACKUP_DIR/openclaw-$DATE.tar.gz"
 ls -t "$BACKUP_DIR"/openclaw-*.tar.gz | tail -n +8 | xargs -r rm
 HELPER
-    chmod +x /usr/local/bin/openclaw-backup
+chmod +x /usr/local/bin/openclaw-backup
 
-    cat > /usr/local/bin/openclaw-security-check <<'HELPER'
+cat > /usr/local/bin/openclaw-security-check <<HELPER
 #!/bin/bash
-echo "=== OpenClaw Security Audit ==="; echo ""; P=0; F=0
-c() { if eval "$1"; then echo "[PASS] $2"; P=$((P+1)); else echo "[FAIL] $3"; F=$((F+1)); fi; }
+echo "=== OpenClaw Security Audit ==="
+echo ""
+P=0; F=0
+c() { if eval "\$1"; then echo "[PASS] \$2"; P=\$((P+1)); else echo "[FAIL] \$3"; F=\$((F+1)); fi; }
 c '! ss -tlnp 2>/dev/null | grep -q "0.0.0.0:18789"' "Port 18789 localhost-only" "Port 18789 exposed!"
-c 'test "$(stat -c %a /home/openclaw/.env 2>/dev/null)" = "600"' ".env perms 600" ".env perms wrong"
-c 'test "$(stat -c %a /home/openclaw/.clawdbot/clawdbot.json 2>/dev/null)" = "600"' "Config perms 600" "Config perms wrong"
+c 'test "\$(stat -c %a /home/openclaw/.env 2>/dev/null)" = "600"' ".env perms 600" ".env perms wrong"
+c 'test -f /home/openclaw/.openclaw/openclaw.json' "Config file exists" "Config file missing!"
 c 'systemctl is-active --quiet nftables' "Firewall active" "Firewall down!"
 c 'systemctl is-active --quiet fail2ban' "fail2ban active" "fail2ban down!"
-c 'systemctl is-active --quiet nginx' "nginx active" "nginx down!"
 c 'systemctl is-active --quiet docker' "Docker running" "Docker down!"
+c 'systemctl is-active --quiet openclaw-gateway' "Gateway running" "Gateway down!"
 c 'grep -q "^PasswordAuthentication no" /etc/ssh/sshd_config 2>/dev/null' "SSH passwd disabled" "SSH passwd enabled!"
-TL=$(grep "CLAWDBOT_GATEWAY_TOKEN=" /home/openclaw/.env 2>/dev/null | cut -d= -f2 | wc -c)
-c 'test "$TL" -ge 32' "Token OK (${TL}c)" "Token missing/short!"
-echo ""; echo "Score: ${P} pass, ${F} fail"
+c 'ss -tlnp 2>/dev/null | grep -q ":${SSH_PORT}"' "SSH on port ${SSH_PORT}" "SSH not on custom port!"
+c 'grep -q "token" /home/openclaw/.openclaw/openclaw.json 2>/dev/null' "Gateway token set" "Gateway token missing!"
+c '! ss -tlnp 2>/dev/null | grep -qE ":443|:80|:22\$"' "No standard ports exposed" "Standard ports open!"
+echo ""
+echo "Score: \${P} pass, \${F} fail"
 HELPER
-    chmod +x /usr/local/bin/openclaw-security-check
-fi
+chmod +x /usr/local/bin/openclaw-security-check
 
 # Daily backup cron
 echo "0 3 * * * root /usr/local/bin/openclaw-backup" > /etc/cron.d/openclaw-backup
 
 # ============================================================
-# 19. MOTD — credentials & info on SSH login
+# 19. MOTD — CLI documentation on SSH login
 # ============================================================
 echo "[openclaw-setup] Setting up MOTD..."
 cat > /etc/motd <<MOTD
@@ -718,22 +661,114 @@ cat > /etc/motd <<MOTD
  \___/| .__/ \___|_| |_|\____|_|\__,_| \_/\_/
       |_|
 
-  WebUI:    https://${VPS_IP}
-  User:     ${WEBUI_USER}
-  Password: ${WEBUI_PASS}
+  ============================================================
+  OpenClaw AI Assistant
+  ============================================================
+  VPS IP:        ${VPS_IP}
+  SSH Port:      ${SSH_PORT}
+  Gateway Token: ${GATEWAY_TOKEN}
+  ============================================================
 
-  Commands:
-    openclaw-status          Check service status
-    openclaw-security-check  Run security audit
-    openclaw-backup          Create backup
+  ============================================================
+  STEP 1: ADD YOUR AI MODEL API KEY
+  ============================================================
 
-  Config:   ${OPENCLAW_CONFIG_DIR}/clawdbot.json
-  Env:      ${OPENCLAW_HOME}/.env
-  Logs:     journalctl -u openclaw-gateway -f
+  Edit the environment file:
+    nano /home/openclaw/.env
 
-  Add your LLM API key:
-    nano ${OPENCLAW_HOME}/.env
+  Add ONE of these (uncomment and fill in your key):
+
+    # For Claude (Anthropic):
+    ANTHROPIC_API_KEY=sk-ant-api03-xxxxx
+
+    # For ChatGPT (OpenAI):
+    OPENAI_API_KEY=sk-xxxxx
+
+    # For other models, see: https://docs.openclaw.ai/models
+
+  After adding the key, restart the gateway:
     systemctl restart openclaw-gateway
+
+  ============================================================
+  STEP 2: CONNECT A MESSAGING CHANNEL
+  ============================================================
+
+  Run the setup wizard as the openclaw user:
+    su - openclaw
+
+  Then choose your channel:
+
+  --- WhatsApp ---
+    openclaw channels login
+    (Scan the QR code with your phone's WhatsApp)
+
+  --- Telegram ---
+    1. Create a bot with @BotFather on Telegram
+    2. Copy the bot token (format: 123456789:ABC-xyz...)
+    3. Add to /home/openclaw/.env:
+       TELEGRAM_BOT_TOKEN=<your-token-from-botfather>
+    4. systemctl restart openclaw-gateway
+    5. openclaw onboard (select Telegram)
+
+  --- Discord ---
+    1. Create app at https://discord.com/developers/applications
+    2. Get bot token from Bot section
+    3. Add to /home/openclaw/.env:
+       DISCORD_BOT_TOKEN=<your-token-from-discord>
+    4. systemctl restart openclaw-gateway
+    5. openclaw onboard (select Discord)
+
+  --- Slack ---
+    openclaw onboard (select Slack, follow OAuth flow)
+
+  ============================================================
+  COMMON COMMANDS
+  ============================================================
+
+  openclaw status              Gateway status
+  openclaw health              Health check
+  openclaw logs --follow       Live logs
+  openclaw doctor              Diagnose issues
+
+  openclaw onboard             Interactive setup wizard
+  openclaw configure           Edit configuration
+
+  openclaw channels login      WhatsApp QR code
+  openclaw pairing list        Pending pairings
+  openclaw security audit      Security check
+
+  ============================================================
+  HELPER SCRIPTS
+  ============================================================
+
+  openclaw-status              Service overview
+  openclaw-security-check      Security audit (10 checks)
+  openclaw-backup              Create backup
+
+  ============================================================
+  FILES & LOCATIONS
+  ============================================================
+
+  Config:     /home/openclaw/.openclaw/openclaw.json
+  Env/Keys:   /home/openclaw/.env
+  Workspace:  /home/openclaw/workspace
+  Logs:       journalctl -u openclaw-gateway -f
+
+  ============================================================
+  OPTIONAL: WEB UI VIA SSH TUNNEL
+  ============================================================
+
+  From your local computer, run:
+    ssh -p ${SSH_PORT} -L 18789:127.0.0.1:18789 root@${VPS_IP}
+
+  Then open in browser:
+    http://localhost:18789
+
+  Enter the Gateway Token when prompted.
+
+  ============================================================
+  DOCUMENTATION: https://docs.openclaw.ai
+  ============================================================
 
 MOTD
 
@@ -747,9 +782,7 @@ touch "${PROVISIONED_FLAG}"
 cat > /opt/openclaw-setup/.credentials <<CREDS
 # OpenClaw Credentials — $(date -u +"%Y-%m-%dT%H:%M:%SZ")
 VPS_IP=${VPS_IP}
-WEBUI_URL=https://${VPS_IP}
-WEBUI_USER=${WEBUI_USER}
-WEBUI_PASS=${WEBUI_PASS}
+SSH_PORT=${SSH_PORT}
 GATEWAY_TOKEN=${GATEWAY_TOKEN}
 CREDS
 chmod 600 /opt/openclaw-setup/.credentials
@@ -757,10 +790,19 @@ chmod 600 /opt/openclaw-setup/.credentials
 echo ""
 echo "[openclaw-setup] ============================================"
 echo "[openclaw-setup] Setup complete!"
-echo "[openclaw-setup] WebUI:    https://${VPS_IP}"
-echo "[openclaw-setup] User:     ${WEBUI_USER}"
-echo "[openclaw-setup] Password: ${WEBUI_PASS}"
 echo "[openclaw-setup] ============================================"
-echo "[openclaw-setup] Add your LLM API key in ${OPENCLAW_HOME}/.env"
-echo "[openclaw-setup] Then: systemctl restart openclaw-gateway"
+echo "[openclaw-setup] VPS IP:         ${VPS_IP}"
+echo "[openclaw-setup] SSH Port:       ${SSH_PORT}"
+echo "[openclaw-setup] Gateway Token:  ${GATEWAY_TOKEN}"
+echo "[openclaw-setup] ============================================"
+echo "[openclaw-setup]"
+echo "[openclaw-setup] IMPORTANT: SSH port changed to ${SSH_PORT}"
+echo "[openclaw-setup] Reconnect with: ssh -p ${SSH_PORT} root@${VPS_IP}"
+echo "[openclaw-setup]"
+echo "[openclaw-setup] Next steps (shown on login):"
+echo "[openclaw-setup]   1. Add your API key to /home/openclaw/.env"
+echo "[openclaw-setup]   2. Restart gateway:   systemctl restart openclaw-gateway"
+echo "[openclaw-setup]   3. Setup channels:    su - openclaw -c 'openclaw onboard'"
+echo "[openclaw-setup]"
+echo "[openclaw-setup] Documentation: https://docs.openclaw.ai"
 echo "[openclaw-setup] ============================================"
