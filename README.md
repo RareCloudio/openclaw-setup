@@ -4,6 +4,8 @@ Automated, hardened setup for [OpenClaw](https://openclaw.ai) on a fresh Ubuntu 
 
 One command to install OpenClaw with 7-layer security hardening. **CLI-only access** — no WebUI exposed to the internet.
 
+> **Want a pre-configured VPS?** Get OpenClaw ready-to-use at [rarecloud.io](https://rarecloud.io) — no setup required.
+
 ## Quick Start
 
 ```bash
