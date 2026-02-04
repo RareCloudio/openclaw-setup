@@ -1,8 +1,10 @@
 # OpenClaw Secure VPS Setup
 
-Automated, hardened setup for [OpenClaw](https://openclaw.ai) on a fresh Ubuntu 24.04 VPS.
+**Stop exposing your AI assistant to the internet.**
 
-One command to install OpenClaw with 7-layer security hardening. **CLI-only access** — no WebUI exposed to the internet.
+In January 2026, security researchers found [42,000+ OpenClaw instances](https://www.theregister.com/2026/02/02/openclaw_security_issues/) running with no authentication — API keys, conversations, and personal data wide open. This project fixes that.
+
+One command. 7-layer security. **Your OpenClaw, locked down.**
 
 > **Want a pre-configured VPS?** Get OpenClaw ready-to-use at [rarecloud.io](https://rarecloud.io) — no setup required.
 
@@ -157,8 +159,18 @@ openclaw-security-check
 
 ## Contributing
 
-Contributions welcome — especially around security hardening. Open an issue or PR.
+We need help securing more OpenClaw installations. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+Priority areas:
+- Support for more Linux distributions
+- Additional hardening measures
+- Automated security testing
+- Translations
+
+## Security
+
+Found a vulnerability? Please report it privately — see [SECURITY.md](SECURITY.md).
 
 ## License
 
-MIT
+[MIT](LICENSE)
