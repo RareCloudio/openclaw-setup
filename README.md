@@ -174,3 +174,5 @@ Found a vulnerability? Please report it privately — see [SECURITY.md](SECURITY
 ## License
 
 [MIT](LICENSE)
+
+If you fork or build upon this project, a link back to [RareCloudio/openclaw-setup](https://github.com/RareCloudio/openclaw-setup) is appreciated.
