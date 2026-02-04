@@ -554,23 +554,14 @@ User=${OPENCLAW_USER}
 Group=${OPENCLAW_USER}
 WorkingDirectory=${OPENCLAW_HOME}
 EnvironmentFile=${OPENCLAW_HOME}/.env
+# Fix for Node.js 22 IPv6 issues on some servers
+Environment=NODE_OPTIONS=--dns-result-order=ipv4first
 ExecStart=${OPENCLAW_BIN} gateway --port 18789 --bind loopback
 Restart=always
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=openclaw
-
-NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=${OPENCLAW_HOME}
-ReadWritePaths=/tmp
-PrivateTmp=true
-ProtectKernelTunables=true
-ProtectKernelModules=true
-ProtectControlGroups=true
-RestrictNamespaces=false
 
 [Install]
 WantedBy=multi-user.target
