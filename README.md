@@ -80,40 +80,28 @@ No WebUI exposure eliminates the attack surface from the 42,000+ exposed instanc
 
 ## Post-Setup Guide
 
+After SSH login, you'll see the setup instructions. Here's the quick version:
+
 ### Step 1: Add Your API Key
 
 ```bash
-nano /home/openclaw/.env
-# Add one of:
-#   ANTHROPIC_API_KEY=sk-ant-api03-xxxxx
-#   OPENAI_API_KEY=sk-xxxxx
-systemctl restart openclaw-gateway
+su - openclaw -c "openclaw models auth add"
 ```
+
+This interactive wizard lets you add API keys for Claude, OpenAI, and other providers.
 
 ### Step 2: Connect a Messaging Channel
 
 ```bash
-su - openclaw
-
-# WhatsApp (QR code in terminal):
-openclaw channels login
-
-# Telegram:
-# 1. Create bot with @BotFather, get token
-# 2. Add TELEGRAM_BOT_TOKEN=xxx to /home/openclaw/.env
-# 3. systemctl restart openclaw-gateway
-# 4. openclaw onboard (select Telegram)
-
-# Discord/Slack:
-openclaw onboard
+su - openclaw -c "openclaw channels login"
 ```
+
+For WhatsApp, scan the QR code. For Telegram/Discord/Slack, run `openclaw onboard`.
 
 ### Step 3: Verify Setup
 
 ```bash
-openclaw-security-check  # Should show 11/11 pass
-openclaw status          # Gateway status
-openclaw health          # Health check
+su - openclaw -c "openclaw health"
 ```
 
 ## Helper Commands
@@ -132,10 +120,11 @@ If you prefer using the Control UI instead of CLI:
 # From your local machine:
 ssh -p 41722 -L 18789:127.0.0.1:18789 root@YOUR_VPS_IP
 
-# Then open in browser:
-# http://localhost:18789
-# Enter the Gateway Token when prompted
+# Then open in browser (token is in /opt/openclaw-setup/.credentials):
+http://localhost:18789/?token=YOUR_GATEWAY_TOKEN
 ```
+
+The full URL with token is shown in the MOTD when you SSH into the server.
 
 ## Files & Locations
 

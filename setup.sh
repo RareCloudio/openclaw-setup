@@ -654,121 +654,43 @@ echo "0 3 * * * root /usr/local/bin/openclaw-backup" > /etc/cron.d/openclaw-back
 echo "[openclaw-setup] Setting up MOTD..."
 cat > /etc/motd <<MOTD
 
-  ___                    ____ _
- / _ \ _ __   ___ _ __  / ___| | __ ___      __
-| | | | '_ \ / _ \ '_ \| |   | |/ _\` \ \ /\ / /
-| |_| | |_) |  __/ | | | |___| | (_| |\ V  V /
- \___/| .__/ \___|_| |_|\____|_|\__,_| \_/\_/
-      |_|
+  ═══════════════════════════════════════════════════════════
+   OpenClaw AI Assistant - Ready to configure
+  ═══════════════════════════════════════════════════════════
 
-  ============================================================
-  OpenClaw AI Assistant
-  ============================================================
-  VPS IP:        ${VPS_IP}
-  SSH Port:      ${SSH_PORT}
-  Gateway Token: ${GATEWAY_TOKEN}
-  ============================================================
+   SETUP (3 simple steps):
 
-  ============================================================
-  STEP 1: ADD YOUR AI MODEL API KEY
-  ============================================================
+   1. Add your API key (Claude, OpenAI, etc.):
+      su - openclaw -c "openclaw models auth add"
 
-  Edit the environment file:
-    nano /home/openclaw/.env
+   2. Connect messaging (WhatsApp, Telegram, etc.):
+      su - openclaw -c "openclaw channels login"
 
-  Add ONE of these (uncomment and fill in your key):
+   3. Verify everything works:
+      su - openclaw -c "openclaw health"
 
-    # For Claude (Anthropic):
-    ANTHROPIC_API_KEY=sk-ant-api03-xxxxx
+  ═══════════════════════════════════════════════════════════
+   USEFUL COMMANDS
+  ═══════════════════════════════════════════════════════════
 
-    # For ChatGPT (OpenAI):
-    OPENAI_API_KEY=sk-xxxxx
+   openclaw status         Check gateway status
+   openclaw doctor         Diagnose problems
+   openclaw logs -f        Live logs
+   openclaw-security-check Security audit
 
-    # For other models, see: https://docs.openclaw.ai/models
+  ═══════════════════════════════════════════════════════════
+   OPTIONAL: Web UI (from your computer)
+  ═══════════════════════════════════════════════════════════
 
-  After adding the key, restart the gateway:
-    systemctl restart openclaw-gateway
+   1. Open SSH tunnel:
+      ssh -p ${SSH_PORT} -L 18789:127.0.0.1:18789 root@${VPS_IP}
 
-  ============================================================
-  STEP 2: CONNECT A MESSAGING CHANNEL
-  ============================================================
+   2. Open in browser:
+      http://localhost:18789/?token=${GATEWAY_TOKEN}
 
-  Run the setup wizard as the openclaw user:
-    su - openclaw
-
-  Then choose your channel:
-
-  --- WhatsApp ---
-    openclaw channels login
-    (Scan the QR code with your phone's WhatsApp)
-
-  --- Telegram ---
-    1. Create a bot with @BotFather on Telegram
-    2. Copy the bot token (format: 123456789:ABC-xyz...)
-    3. Add to /home/openclaw/.env:
-       TELEGRAM_BOT_TOKEN=<your-token-from-botfather>
-    4. systemctl restart openclaw-gateway
-    5. openclaw onboard (select Telegram)
-
-  --- Discord ---
-    1. Create app at https://discord.com/developers/applications
-    2. Get bot token from Bot section
-    3. Add to /home/openclaw/.env:
-       DISCORD_BOT_TOKEN=<your-token-from-discord>
-    4. systemctl restart openclaw-gateway
-    5. openclaw onboard (select Discord)
-
-  --- Slack ---
-    openclaw onboard (select Slack, follow OAuth flow)
-
-  ============================================================
-  COMMON COMMANDS
-  ============================================================
-
-  openclaw status              Gateway status
-  openclaw health              Health check
-  openclaw logs --follow       Live logs
-  openclaw doctor              Diagnose issues
-
-  openclaw onboard             Interactive setup wizard
-  openclaw configure           Edit configuration
-
-  openclaw channels login      WhatsApp QR code
-  openclaw pairing list        Pending pairings
-  openclaw security audit      Security check
-
-  ============================================================
-  HELPER SCRIPTS
-  ============================================================
-
-  openclaw-status              Service overview
-  openclaw-security-check      Security audit (10 checks)
-  openclaw-backup              Create backup
-
-  ============================================================
-  FILES & LOCATIONS
-  ============================================================
-
-  Config:     /home/openclaw/.openclaw/openclaw.json
-  Env/Keys:   /home/openclaw/.env
-  Workspace:  /home/openclaw/workspace
-  Logs:       journalctl -u openclaw-gateway -f
-
-  ============================================================
-  OPTIONAL: WEB UI VIA SSH TUNNEL
-  ============================================================
-
-  From your local computer, run:
-    ssh -p ${SSH_PORT} -L 18789:127.0.0.1:18789 root@${VPS_IP}
-
-  Then open in browser:
-    http://localhost:18789
-
-  Enter the Gateway Token when prompted.
-
-  ============================================================
-  DOCUMENTATION: https://docs.openclaw.ai
-  ============================================================
+  ═══════════════════════════════════════════════════════════
+   Docs: https://docs.openclaw.ai
+  ═══════════════════════════════════════════════════════════
 
 MOTD
 
