@@ -40,8 +40,6 @@ PROVISIONED_FLAG="/opt/openclaw-setup/.provisioned"
 GATEWAY_TOKEN=""
 SSH_PORT="41722"
 DESKTOP_MODE="false"
-VNC_PASSWORD=""
-ENABLE_NOVNC="false"
 
 # ============================================================
 # Parse arguments
@@ -51,24 +49,22 @@ while [[ $# -gt 0 ]]; do
         --gateway-token) GATEWAY_TOKEN="$2"; shift 2 ;;
         --ssh-port)      SSH_PORT="$2"; shift 2 ;;
         --desktop)       DESKTOP_MODE="true"; shift ;;
-        --vnc-password)  VNC_PASSWORD="$2"; shift 2 ;;
-        --novnc)         ENABLE_NOVNC="true"; shift ;;
         --help|-h)
             echo "Usage: bash setup.sh [OPTIONS]"
             echo ""
             echo "Options:"
             echo "  --gateway-token TOKEN  Gateway token (generated if empty)"
             echo "  --ssh-port PORT        SSH port (default: 41722)"
-            echo "  --desktop              Install desktop environment (XFCE + VNC)"
-            echo "  --vnc-password PASS    VNC password (generated if empty)"
-            echo "  --novnc                Enable noVNC web access (port 6080)"
+            echo "  --desktop              Install desktop environment (XFCE + browsers)"
             echo "  --help                 Show this help"
             echo ""
             echo "Server mode (default):"
             echo "  bash setup.sh"
             echo ""
-            echo "Desktop mode (with GUI + VNC):"
-            echo "  bash setup.sh --desktop --novnc"
+            echo "Desktop mode (XFCE + real browsers):"
+            echo "  bash setup.sh --desktop"
+            echo ""
+            echo "Access desktop via your VPS provider's VNC console."
             exit 0
             ;;
         *) echo "Unknown option: $1"; exit 1 ;;
@@ -118,12 +114,6 @@ fi
 if [[ ${#GATEWAY_TOKEN} -lt 32 ]]; then
     echo "[openclaw-setup] ERROR: Gateway token must be at least 32 characters for security."
     exit 1
-fi
-
-# Generate VNC password if desktop mode and not provided
-if [[ "${DESKTOP_MODE}" == "true" && -z "${VNC_PASSWORD}" ]]; then
-    VNC_PASSWORD=$(openssl rand -base64 12 | tr -dc 'a-zA-Z0-9' | head -c 12)
-    echo "[openclaw-setup] Generated random VNC password."
 fi
 
 # Validate SSH port
@@ -221,15 +211,18 @@ if [[ "${DESKTOP_MODE}" == "true" ]]; then
         gtk2-engines-pixbuf \
         libxfce4ui-utils \
         thunar \
-        mousepad
+        mousepad \
+        lightdm \
+        lightdm-gtk-greeter
     
-    echo "[openclaw-setup] Installing TigerVNC server..."
-    apt-get install -y -qq tigervnc-standalone-server tigervnc-common
-    
-    if [[ "${ENABLE_NOVNC}" == "true" ]]; then
-        echo "[openclaw-setup] Installing noVNC..."
-        apt-get install -y -qq novnc python3-websockify
-    fi
+    # Configure auto-login for openclaw user
+    mkdir -p /etc/lightdm/lightdm.conf.d
+    cat > /etc/lightdm/lightdm.conf.d/50-openclaw-autologin.conf <<'LIGHTDM'
+[Seat:*]
+autologin-user=openclaw
+autologin-user-timeout=0
+user-session=xfce
+LIGHTDM
     
     echo "[openclaw-setup] Desktop environment installed."
 fi
@@ -357,43 +350,18 @@ ENVFILE
 # Add DISPLAY for desktop mode
 if [[ "${DESKTOP_MODE}" == "true" ]]; then
     echo "" >> "${OPENCLAW_HOME}/.env"
-    echo "# Desktop mode - VNC display" >> "${OPENCLAW_HOME}/.env"
-    echo "DISPLAY=:1" >> "${OPENCLAW_HOME}/.env"
+    echo "# Desktop mode - X11 display" >> "${OPENCLAW_HOME}/.env"
+    echo "DISPLAY=:0" >> "${OPENCLAW_HOME}/.env"
 fi
 
 chown "${OPENCLAW_USER}:${OPENCLAW_USER}" "${OPENCLAW_HOME}/.env"
 chmod 600 "${OPENCLAW_HOME}/.env"
 
 # ============================================================
-# Desktop: Configure VNC and browser settings
+# Desktop: Configure XFCE and browser settings
 # ============================================================
 if [[ "${DESKTOP_MODE}" == "true" ]]; then
-    echo "[openclaw-setup] Configuring VNC server..."
-    
-    VNC_DIR="${OPENCLAW_HOME}/.vnc"
-    mkdir -p "${VNC_DIR}"
-    
-    # Set VNC password
-    echo "${VNC_PASSWORD}" | vncpasswd -f > "${VNC_DIR}/passwd"
-    chmod 600 "${VNC_DIR}/passwd"
-    
-    # VNC startup script
-    cat > "${VNC_DIR}/xstartup" <<'VNCSTART'
-#!/bin/bash
-unset SESSION_MANAGER
-unset DBUS_SESSION_BUS_ADDRESS
-export XKL_XMODMAP_DISABLE=1
-exec startxfce4
-VNCSTART
-    chmod +x "${VNC_DIR}/xstartup"
-    
-    # VNC config
-    cat > "${VNC_DIR}/config" <<'VNCCONF'
-geometry=1920x1080
-depth=24
-VNCCONF
-    
-    chown -R "${OPENCLAW_USER}:${OPENCLAW_USER}" "${VNC_DIR}"
+    echo "[openclaw-setup] Configuring desktop environment..."
     
     # Disable screensaver and screen lock
     XFCE_CONFIG="${OPENCLAW_HOME}/.config/xfce4/xfconf/xfce-perchannel-xml"
@@ -441,56 +409,7 @@ with open(config_path, 'w') as f:
     f.write('\n')
 "
     
-    # Create VNC systemd service
-    cat > /etc/systemd/system/vncserver@.service <<VNCSVC
-[Unit]
-Description=TigerVNC Server for %i
-After=syslog.target network.target
-
-[Service]
-Type=forking
-User=${OPENCLAW_USER}
-Group=${OPENCLAW_USER}
-WorkingDirectory=${OPENCLAW_HOME}
-ExecStartPre=-/usr/bin/vncserver -kill :%i > /dev/null 2>&1
-ExecStart=/usr/bin/vncserver :%i -geometry 1920x1080 -depth 24 -localhost no
-ExecStop=/usr/bin/vncserver -kill :%i
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-VNCSVC
-    
-    systemctl daemon-reload
-    systemctl enable vncserver@1
-    systemctl start vncserver@1
-    
-    # noVNC service if enabled
-    if [[ "${ENABLE_NOVNC}" == "true" ]]; then
-        cat > /etc/systemd/system/novnc.service <<NOVNCSVC
-[Unit]
-Description=noVNC WebSocket proxy
-After=vncserver@1.service
-Requires=vncserver@1.service
-
-[Service]
-Type=simple
-User=${OPENCLAW_USER}
-ExecStart=/usr/bin/websockify --web=/usr/share/novnc/ 6080 localhost:5901
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-NOVNCSVC
-        
-        systemctl daemon-reload
-        systemctl enable novnc
-        systemctl start novnc
-    fi
-    
-    echo "[openclaw-setup] VNC server configured."
+    echo "[openclaw-setup] Desktop configured."
 fi
 
 # ============================================================
@@ -554,15 +473,7 @@ if command -v ufw &>/dev/null; then
     systemctl disable ufw 2>/dev/null || true
 fi
 
-# Build firewall rules based on mode
-FIREWALL_PORTS="${SSH_PORT}"
-if [[ "${DESKTOP_MODE}" == "true" && "${ENABLE_NOVNC}" == "true" ]]; then
-    FIREWALL_PORTS="${SSH_PORT}, 6080"
-    echo "[openclaw-setup] Firewall: Opening SSH (${SSH_PORT}) + noVNC (6080)"
-    echo "[openclaw-setup] NOTE: VNC (5901) accessible only via SSH tunnel for security"
-else
-    echo "[openclaw-setup] Firewall: Opening SSH (${SSH_PORT}) only"
-fi
+echo "[openclaw-setup] Firewall: Opening SSH (${SSH_PORT}) only"
 
 cat > /etc/nftables.conf <<NFT
 #!/usr/sbin/nft -f
@@ -575,7 +486,7 @@ table inet filter {
         ct state established,related accept
         ip protocol icmp icmp type echo-request limit rate 5/second accept
         ip6 nexthdr icmpv6 icmpv6 type echo-request limit rate 5/second accept
-        tcp dport { ${FIREWALL_PORTS} } ct state new limit rate 10/minute accept
+        tcp dport ${SSH_PORT} ct state new limit rate 10/minute accept
         limit rate 5/minute log prefix "[nftables-drop] " drop
     }
     chain forward {
@@ -763,13 +674,13 @@ echo "[openclaw-setup] Creating systemd service..."
 OPENCLAW_BIN=$(which openclaw)
 
 if [[ "${DESKTOP_MODE}" == "true" ]]; then
-    # Desktop mode: depends on VNC, has DISPLAY set
+    # Desktop mode: has DISPLAY set for real browser
     cat > /etc/systemd/system/openclaw-gateway.service <<SVCFILE
 [Unit]
 Description=OpenClaw Gateway - AI Assistant (Desktop Mode)
 Documentation=https://docs.openclaw.ai
-After=network-online.target docker.service vncserver@1.service
-Wants=network-online.target docker.service vncserver@1.service
+After=network-online.target docker.service display-manager.service
+Wants=network-online.target docker.service
 
 [Service]
 Type=simple
@@ -777,7 +688,7 @@ User=${OPENCLAW_USER}
 Group=${OPENCLAW_USER}
 WorkingDirectory=${OPENCLAW_HOME}
 EnvironmentFile=${OPENCLAW_HOME}/.env
-Environment=DISPLAY=:1
+Environment=DISPLAY=:0
 # Fix for Node.js 22 IPv6 issues on some servers
 Environment=NODE_OPTIONS=--dns-result-order=ipv4first
 ExecStart=${OPENCLAW_BIN} gateway --port 18789 --bind loopback
@@ -904,38 +815,19 @@ if [[ "${DESKTOP_MODE}" == "true" ]]; then
    OpenClaw Desktop - AI Assistant with Full GUI
   ═══════════════════════════════════════════════════════════
 
-   REMOTE DESKTOP ACCESS:
-MOTD
+   DESKTOP ACCESS:
 
-    if [[ "${ENABLE_NOVNC}" == "true" ]]; then
-        cat >> /etc/motd <<MOTD
+   Use your VPS provider's VNC console to access the desktop.
+   (RareCloud, DigitalOcean, Vultr, etc. all provide this)
 
-   Option 1 - Browser (noVNC):
-      URL:      http://${VPS_IP}:6080/vnc.html
-      Password: ${VNC_PASSWORD}
-
-   Option 2 - VNC Client (via SSH tunnel - most secure):
-      ssh -p ${SSH_PORT} -L 5901:127.0.0.1:5901 root@${VPS_IP}
-      Then connect VNC viewer to: localhost:5901
-      Password: ${VNC_PASSWORD}
-MOTD
-    else
-        cat >> /etc/motd <<MOTD
-
-   VNC Access (via SSH tunnel - secure):
-      ssh -p ${SSH_PORT} -L 5901:127.0.0.1:5901 root@${VPS_IP}
-      Then connect VNC viewer to: localhost:5901
-      Password: ${VNC_PASSWORD}
-MOTD
-    fi
-
-    cat >> /etc/motd <<MOTD
+   The desktop auto-logs in as 'openclaw' user.
+   OpenClaw browser is visible - watch your AI work in real-time!
 
   ═══════════════════════════════════════════════════════════
    SETUP (3 simple steps):
   ═══════════════════════════════════════════════════════════
 
-   1. Connect via VNC to see the desktop
+   1. Open VNC console from your provider's control panel
 
    2. Add your API key:
       su - openclaw -c "openclaw models auth add"
@@ -947,10 +839,10 @@ MOTD
    USEFUL COMMANDS
   ═══════════════════════════════════════════════════════════
 
-   openclaw status              Check gateway status
-   openclaw doctor              Diagnose problems
-   systemctl status vncserver@1 Check VNC status
-   openclaw-security-check      Security audit
+   openclaw status         Check gateway status
+   openclaw doctor         Diagnose problems
+   openclaw logs -f        Live logs
+   openclaw-security-check Security audit
 
   ═══════════════════════════════════════════════════════════
    Docs: https://docs.openclaw.ai
@@ -1019,8 +911,6 @@ CREDS
 if [[ "${DESKTOP_MODE}" == "true" ]]; then
     cat >> /opt/openclaw-setup/.credentials <<CREDS
 DESKTOP_MODE=true
-VNC_PASSWORD=${VNC_PASSWORD}
-NOVNC_ENABLED=${ENABLE_NOVNC}
 CREDS
 fi
 chmod 600 /opt/openclaw-setup/.credentials
@@ -1034,11 +924,7 @@ echo "[openclaw-setup] SSH Port:       ${SSH_PORT}"
 echo "[openclaw-setup] Gateway Token:  ${GATEWAY_TOKEN}"
 
 if [[ "${DESKTOP_MODE}" == "true" ]]; then
-    echo "[openclaw-setup] Mode:           Desktop (GUI + VNC)"
-    echo "[openclaw-setup] VNC Password:   ${VNC_PASSWORD}"
-    if [[ "${ENABLE_NOVNC}" == "true" ]]; then
-        echo "[openclaw-setup] noVNC URL:      http://${VPS_IP}:6080/vnc.html"
-    fi
+    echo "[openclaw-setup] Mode:           Desktop (XFCE + real browsers)"
 fi
 
 echo "[openclaw-setup] ============================================"
@@ -1048,9 +934,9 @@ echo "[openclaw-setup] Reconnect with: ssh -p ${SSH_PORT} root@${VPS_IP}"
 
 if [[ "${DESKTOP_MODE}" == "true" ]]; then
     echo "[openclaw-setup]"
-    echo "[openclaw-setup] VNC Access (SSH tunnel - recommended):"
-    echo "[openclaw-setup]   ssh -p ${SSH_PORT} -L 5901:127.0.0.1:5901 root@${VPS_IP}"
-    echo "[openclaw-setup]   Then connect VNC viewer to localhost:5901"
+    echo "[openclaw-setup] Desktop Access:"
+    echo "[openclaw-setup]   Use your VPS provider's VNC console"
+    echo "[openclaw-setup]   Desktop auto-logs in as 'openclaw' user"
 fi
 
 echo "[openclaw-setup]"

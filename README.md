@@ -18,25 +18,23 @@ Best for: VPS deployments, minimal resources, CLI-focused workflows.
 curl -fsSL https://raw.githubusercontent.com/RareCloudio/openclaw-setup/main/setup.sh | bash
 ```
 
-### Desktop Mode (GUI + VNC)
+### Desktop Mode (GUI)
 
-Best for: Visual monitoring, watching your AI work in real-time, Mac Mini alternative in cloud.
+Best for: Visual monitoring, watching your AI work in real-time, debugging.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/RareCloudio/openclaw-setup/main/setup.sh -o setup.sh
 chmod +x setup.sh
-sudo bash setup.sh --desktop --novnc
+sudo bash setup.sh --desktop
 ```
 
 This adds:
-- XFCE desktop environment
+- XFCE desktop environment (lightweight)
 - Firefox + Chrome browsers (real GUI, not headless)
-- TigerVNC server + optional noVNC web access
+- Auto-login as `openclaw` user
 - OpenClaw configured for visible browser (headless: false)
 
-Connect via:
-- **SSH tunnel + VNC** (secure): `ssh -p 41722 -L 5901:localhost:5901 root@YOUR_VPS_IP`
-- **noVNC web**: `http://YOUR_VPS_IP:6080/vnc.html` (if `--novnc` enabled)
+**Access the desktop via your VPS provider's VNC console** (RareCloud, DigitalOcean, Vultr, etc. all provide this in their control panel).
 
 ---
 
@@ -64,8 +62,8 @@ The MOTD will show your Gateway Token and step-by-step instructions for adding y
 # Server mode (default):
 bash setup.sh
 
-# Desktop mode with noVNC:
-bash setup.sh --desktop --novnc
+# Desktop mode:
+bash setup.sh --desktop
 
 # Custom token and port:
 bash setup.sh --gateway-token "$(openssl rand -hex 32)" --ssh-port 41722
@@ -75,9 +73,7 @@ bash setup.sh --gateway-token "$(openssl rand -hex 32)" --ssh-port 41722
 |------|-------------|---------|
 | `--gateway-token` | Gateway auth token (alphanumeric, min 32 chars) | random 64-char hex |
 | `--ssh-port` | SSH port (1024-65535) | 41722 |
-| `--desktop` | Install desktop environment (XFCE + VNC) | disabled |
-| `--vnc-password` | VNC password | random 12-char |
-| `--novnc` | Enable noVNC web access (port 6080) | disabled |
+| `--desktop` | Install desktop environment (XFCE + browsers) | disabled |
 
 ## Architecture
 
@@ -192,69 +188,60 @@ openclaw-security-check
 
 ## Desktop Mode Details
 
-The `--desktop` flag adds a full Linux desktop accessible via VNC — like having a Mac Mini in the cloud for your AI agent.
+The `--desktop` flag adds a full Linux desktop for visual AI monitoring.
 
 ### Server vs Desktop Comparison
 
 | Aspect | Server | Desktop |
 |--------|--------|---------|
 | Browser | Headless Chrome | Real Firefox + Chrome with GUI |
-| Access | SSH only | SSH + VNC/noVNC |
+| Access | SSH only | SSH + Provider VNC console |
 | Visibility | Logs only | Watch AI work in real-time |
 | Resources | 2-4GB RAM | 4-8GB RAM |
 | Desktop | None | XFCE |
 | Use case | Production, CI/CD | Development, demos, visual debugging |
 
+### How to Access the Desktop
+
+Use your **VPS provider's VNC console** — no additional setup required:
+
+- **RareCloud:** Control Panel → VNC Console
+- **DigitalOcean:** Droplet → Access → Launch Console
+- **Vultr:** Server → View Console
+- **Linode:** Linode → Launch LISH Console
+- **Hetzner:** Cloud Console → Console
+
+The desktop auto-logs in as the `openclaw` user. When OpenClaw uses the browser, you'll see it open and work in real-time.
+
 ### Desktop Architecture
 
 ```
-Internet
-    │
-    ├── SSH (port 41722) ──────────────────────┐
-    │                                          │
-    └── noVNC (port 6080, optional) ───┐       │
-                                       │       │
-                                       ▼       ▼
-                              ┌─────────────────────────┐
-                              │      Ubuntu Server      │
-                              │   ┌─────────────────┐   │
-                              │   │  XFCE Desktop   │   │
-                              │   │                 │   │
-                              │   │  ┌───────────┐  │   │
-                              │   │  │  Browser  │  │   │
-                              │   │  │ (visible) │  │   │
-                              │   │  └───────────┘  │   │
-                              │   │                 │   │
-                              │   │  OpenClaw       │   │
-                              │   │  (DISPLAY=:1)   │   │
-                              │   └─────────────────┘   │
-                              │                         │
-                              │   TigerVNC (:1/5901)    │
-                              └─────────────────────────┘
-```
-
-### VNC Access Methods
-
-**Method 1: SSH Tunnel (Recommended - Most Secure)**
-```bash
-# From your local machine:
-ssh -p 41722 -L 5901:localhost:5901 root@YOUR_VPS_IP
-
-# Then connect any VNC viewer to:
-localhost:5901
-```
-
-**Method 2: noVNC Web Access**
-```bash
-# If installed with --novnc:
-http://YOUR_VPS_IP:6080/vnc.html
+┌─────────────────────────────────────────┐
+│         VPS Provider Console            │
+│         (VNC built into panel)          │
+└────────────────┬────────────────────────┘
+                 │
+                 ▼
+┌─────────────────────────────────────────┐
+│           Ubuntu Server + XFCE          │
+│  ┌───────────────────────────────────┐  │
+│  │         XFCE Desktop              │  │
+│  │  ┌─────────────┐ ┌─────────────┐  │  │
+│  │  │   Chrome    │ │   Firefox   │  │  │
+│  │  │  (visible)  │ │  (visible)  │  │  │
+│  │  └─────────────┘ └─────────────┘  │  │
+│  │                                   │  │
+│  │  OpenClaw Gateway (DISPLAY=:0)    │  │
+│  └───────────────────────────────────┘  │
+│                                         │
+│  LightDM → Auto-login as 'openclaw'     │
+└─────────────────────────────────────────┘
 ```
 
 ### Desktop Security
 
 The desktop setup maintains strong security:
-- VNC port (5901) is NOT exposed by default (SSH tunnel required)
-- noVNC (6080) is optional and requires explicit `--novnc` flag
+- No additional ports exposed (uses provider's built-in VNC)
 - SSH key-only authentication
 - fail2ban protects SSH
 - Same 7-layer security model as server setup
