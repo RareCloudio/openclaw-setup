@@ -10,6 +10,10 @@ One command. 7-layer security. **Your OpenClaw, locked down.**
 
 ## Quick Start
 
+### Option A: Server Setup (Headless)
+
+Best for: VPS deployments, minimal resource usage, CLI-focused workflows.
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/RareCloudio/openclaw-setup/main/setup.sh | bash
 ```
@@ -18,6 +22,30 @@ After setup, SSH is moved to port **41722**. Reconnect with:
 ```bash
 ssh -p 41722 root@YOUR_VPS_IP
 ```
+
+### Option B: Desktop Setup (GUI + VNC)
+
+Best for: Visual monitoring, watching your AI work in real-time, Mac Mini alternative in cloud.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/RareCloudio/openclaw-setup/main/setup-desktop.sh -o setup-desktop.sh
+chmod +x setup-desktop.sh
+sudo ./setup-desktop.sh --novnc
+```
+
+This installs:
+- XFCE desktop environment
+- Real browser (Firefox or Chrome with `--browser chrome`)
+- TigerVNC + noVNC for remote access
+- OpenClaw configured for GUI browser (headless: false)
+
+Connect via:
+- **SSH tunnel + VNC**: `ssh -p 41722 -L 5901:localhost:5901 root@YOUR_VPS_IP`
+- **noVNC web**: `http://YOUR_VPS_IP:6080/vnc.html` (if `--novnc` enabled)
+
+See [Desktop Setup](#desktop-setup-details) for full documentation.
+
+---
 
 The MOTD will show your Gateway Token and step-by-step instructions for adding your API key and connecting messaging channels.
 
@@ -156,6 +184,89 @@ su - openclaw -c "openclaw doctor"
 # Security audit?
 openclaw-security-check
 ```
+
+## Desktop Setup Details
+
+The desktop variant provides a full Linux desktop accessible via VNC — like having a Mac Mini in the cloud for your AI agent.
+
+### Server vs Desktop Comparison
+
+| Aspect | Server | Desktop |
+|--------|--------|---------|
+| Browser | Headless Chrome | Real Firefox/Chrome with GUI |
+| Access | SSH only | SSH + VNC/noVNC |
+| Visibility | Logs only | Watch AI work in real-time |
+| Resources | 2-4GB RAM | 4-8GB RAM |
+| Desktop | None | XFCE |
+| Use case | Production, CI/CD | Development, demos, visual debugging |
+
+### Desktop Options
+
+```bash
+sudo ./setup-desktop.sh [OPTIONS]
+```
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--vnc-password PASS` | Set VNC password | random 12-char |
+| `--novnc` | Enable noVNC web access (port 6080) | disabled |
+| `--browser chrome` | Use Chrome instead of Firefox | firefox |
+| `--ssh-port PORT` | SSH port | 41722 |
+| `--skip-firewall` | Skip firewall configuration | false |
+
+### Desktop Architecture
+
+```
+Internet
+    │
+    ├── SSH (port 41722) ──────────────────────┐
+    │                                          │
+    └── noVNC (port 6080, optional) ───┐       │
+                                       │       │
+                                       ▼       ▼
+                              ┌─────────────────────────┐
+                              │   Ubuntu Desktop 24.04  │
+                              │   ┌─────────────────┐   │
+                              │   │  XFCE Desktop   │   │
+                              │   │                 │   │
+                              │   │  ┌───────────┐  │   │
+                              │   │  │  Browser  │  │   │
+                              │   │  │ (visible) │  │   │
+                              │   │  └───────────┘  │   │
+                              │   │                 │   │
+                              │   │  OpenClaw       │   │
+                              │   │  (DISPLAY=:1)   │   │
+                              │   └─────────────────┘   │
+                              │                         │
+                              │   TigerVNC (:1/5901)    │
+                              └─────────────────────────┘
+```
+
+### VNC Access Methods
+
+**Method 1: SSH Tunnel (Recommended - Most Secure)**
+```bash
+# From your local machine:
+ssh -p 41722 -L 5901:localhost:5901 openclaw@YOUR_VPS_IP
+
+# Then connect any VNC viewer to:
+localhost:5901
+```
+
+**Method 2: noVNC Web Access**
+```bash
+# If installed with --novnc:
+http://YOUR_VPS_IP:6080/vnc.html
+```
+
+### Desktop Security
+
+The desktop setup maintains strong security:
+- VNC port (5901) is NOT exposed by default (SSH tunnel required)
+- noVNC (6080) is optional and can be firewalled
+- SSH key-only authentication
+- fail2ban protects SSH
+- Same 7-layer security model as server setup
 
 ## Contributing
 
