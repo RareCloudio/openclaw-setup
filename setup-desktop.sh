@@ -627,6 +627,87 @@ EOF
 # FINAL SETUP
 # =============================================================================
 
+create_motd() {
+    log_info "Creating MOTD..."
+    
+    # Get IP address
+    SERVER_IP=$(curl -s --max-time 5 ifconfig.me || hostname -I | awk '{print $1}')
+    
+    cat > /etc/update-motd.d/99-openclaw-desktop << EOF
+#!/bin/bash
+
+# Colors
+BLUE='\033[0;34m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+echo ""
+echo -e "\${BLUE}═══════════════════════════════════════════════════════════════════\${NC}"
+echo -e "\${BLUE}       OpenClaw Desktop - AI Assistant with Full GUI              \${NC}"
+echo -e "\${BLUE}═══════════════════════════════════════════════════════════════════\${NC}"
+echo ""
+echo -e "\${GREEN}REMOTE DESKTOP ACCESS:\${NC}"
+echo ""
+EOF
+
+    if [[ "${ENABLE_NOVNC}" == "true" ]]; then
+        cat >> /etc/update-motd.d/99-openclaw-desktop << EOF
+echo -e "  \${CYAN}Option 1 - Browser (noVNC):\${NC}"
+echo -e "    URL:      \${YELLOW}http://${SERVER_IP}:${NOVNC_PORT}/vnc.html\${NC}"
+echo -e "    Password: \${YELLOW}${VNC_PASSWORD}\${NC}"
+echo ""
+echo -e "  \${CYAN}Option 2 - VNC Client:\${NC}"
+echo -e "    Server:   \${YELLOW}${SERVER_IP}:${VNC_PORT}\${NC}"
+echo -e "    Password: \${YELLOW}${VNC_PASSWORD}\${NC}"
+echo ""
+echo -e "  \${CYAN}Option 3 - SSH Tunnel (most secure):\${NC}"
+EOF
+    else
+        cat >> /etc/update-motd.d/99-openclaw-desktop << EOF
+echo -e "  \${CYAN}Option 1 - VNC Client (via SSH tunnel):\${NC}"
+echo -e "    Password: \${YELLOW}${VNC_PASSWORD}\${NC}"
+echo ""
+echo -e "  \${CYAN}Option 2 - SSH Tunnel (recommended):\${NC}"
+EOF
+    fi
+
+    cat >> /etc/update-motd.d/99-openclaw-desktop << EOF
+echo -e "    \${YELLOW}ssh -p ${SSH_PORT} -L 5901:127.0.0.1:5901 ${OPENCLAW_USER}@${SERVER_IP}\${NC}"
+echo -e "    Then connect VNC viewer to: \${YELLOW}localhost:5901\${NC}"
+echo ""
+echo -e "\${BLUE}───────────────────────────────────────────────────────────────────\${NC}"
+echo ""
+echo -e "\${GREEN}QUICK COMMANDS:\${NC}"
+echo ""
+echo -e "  openclaw-status           Check gateway status"
+echo -e "  openclaw-security-check   Run security audit"
+echo -e "  systemctl status vncserver@1   Check VNC status"
+echo ""
+echo -e "\${GREEN}NEXT STEPS:\${NC}"
+echo ""
+echo -e "  1. Connect via VNC to see the desktop"
+echo -e "  2. Add your API key:  su - ${OPENCLAW_USER} -c 'openclaw models auth add'"
+echo -e "  3. Start OpenClaw:    sudo systemctl start openclaw"
+echo -e "  4. Watch your AI work in the browser!"
+echo ""
+echo -e "\${GREEN}DOCUMENTATION:\${NC}"
+echo -e "  https://github.com/RareCloudio/openclaw-setup/blob/main/docs/DESKTOP.md"
+echo ""
+echo -e "\${BLUE}═══════════════════════════════════════════════════════════════════\${NC}"
+echo ""
+EOF
+
+    chmod +x /etc/update-motd.d/99-openclaw-desktop
+    
+    # Disable default Ubuntu MOTD components that add noise
+    chmod -x /etc/update-motd.d/10-help-text 2>/dev/null || true
+    chmod -x /etc/update-motd.d/50-motd-news 2>/dev/null || true
+    
+    log_success "MOTD created"
+}
+
 create_desktop_shortcuts() {
     log_info "Creating desktop shortcuts..."
     
@@ -742,6 +823,7 @@ main() {
     
     # Finishing touches
     create_desktop_shortcuts
+    create_motd
     
     print_summary
 }
