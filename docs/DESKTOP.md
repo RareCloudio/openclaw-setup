@@ -118,14 +118,20 @@ Ubuntu 24.04
 
 The desktop setup configures OpenClaw to use the real browser:
 
-```yaml
-# ~/.openclaw/config.yaml
-browser:
-  headless: false
-  executablePath: /usr/bin/firefox  # or /usr/bin/google-chrome
+```json
+// ~/.openclaw/openclaw.json
+{
+  "browser": {
+    "enabled": true,
+    "headless": false,
+    "noSandbox": true,
+    "executablePath": "/usr/bin/firefox",
+    "defaultProfile": "openclaw"
+  }
+}
 ```
 
-The `DISPLAY=:1` environment variable routes browser windows to the VNC display.
+The `DISPLAY=:1` environment variable (set in `~/.openclaw/.env`) routes browser windows to the VNC display.
 
 ## Watching Your AI Work
 
