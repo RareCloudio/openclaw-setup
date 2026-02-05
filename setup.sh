@@ -818,7 +818,6 @@ if [[ "${DESKTOP_MODE}" == "true" ]]; then
    DESKTOP ACCESS:
 
    Use your VPS provider's VNC console to access the desktop.
-   (RareCloud, DigitalOcean, Vultr, etc. all provide this)
 
    The desktop auto-logs in as 'openclaw' user.
    OpenClaw browser is visible - watch your AI work in real-time!

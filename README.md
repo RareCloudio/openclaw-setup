@@ -34,7 +34,7 @@ This adds:
 - Auto-login as `openclaw` user
 - OpenClaw configured for visible browser (headless: false)
 
-**Access the desktop via your VPS provider's VNC console** (RareCloud, DigitalOcean, Vultr, etc. all provide this in their control panel).
+**Access the desktop via your VPS provider's VNC console** (available in most control panels).
 
 ---
 
@@ -203,13 +203,7 @@ The `--desktop` flag adds a full Linux desktop for visual AI monitoring.
 
 ### How to Access the Desktop
 
-Use your **VPS provider's VNC console** — no additional setup required:
-
-- **RareCloud:** Control Panel → VNC Console
-- **DigitalOcean:** Droplet → Access → Launch Console
-- **Vultr:** Server → View Console
-- **Linode:** Linode → Launch LISH Console
-- **Hetzner:** Cloud Console → Console
+Use your **VPS provider's VNC console** (available in most provider control panels).
 
 The desktop auto-logs in as the `openclaw` user. When OpenClaw uses the browser, you'll see it open and work in real-time.
 
