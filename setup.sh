@@ -39,6 +39,7 @@ PROVISIONED_FLAG="/opt/openclaw-setup/.provisioned"
 # Defaults (overridable via CLI args)
 GATEWAY_TOKEN=""
 SSH_PORT="41722"
+DESKTOP_MODE="false"
 
 # ============================================================
 # Parse arguments
@@ -47,13 +48,23 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --gateway-token) GATEWAY_TOKEN="$2"; shift 2 ;;
         --ssh-port)      SSH_PORT="$2"; shift 2 ;;
+        --desktop)       DESKTOP_MODE="true"; shift ;;
         --help|-h)
             echo "Usage: bash setup.sh [OPTIONS]"
             echo ""
             echo "Options:"
             echo "  --gateway-token TOKEN  Gateway token (generated if empty)"
             echo "  --ssh-port PORT        SSH port (default: 41722)"
+            echo "  --desktop              Install desktop environment (XFCE + browsers)"
             echo "  --help                 Show this help"
+            echo ""
+            echo "Server mode (default):"
+            echo "  bash setup.sh"
+            echo ""
+            echo "Desktop mode (XFCE + real browsers):"
+            echo "  bash setup.sh --desktop"
+            echo ""
+            echo "Access desktop via your VPS provider's VNC console."
             exit 0
             ;;
         *) echo "Unknown option: $1"; exit 1 ;;
@@ -128,7 +139,7 @@ apt-get install -y -qq \
     python3 iproute2
 
 # ============================================================
-# 2. Install Google Chrome (headless browser for web tools)
+# 2. Install browsers
 # ============================================================
 echo "[openclaw-setup] Installing Google Chrome..."
 if ! command -v google-chrome &>/dev/null; then
@@ -137,6 +148,24 @@ if ! command -v google-chrome &>/dev/null; then
     rm -f /tmp/chrome.deb
 fi
 echo "[openclaw-setup] Chrome $(google-chrome --version) installed."
+
+# Install Firefox in desktop mode
+if [[ "${DESKTOP_MODE}" == "true" ]]; then
+    echo "[openclaw-setup] Installing Firefox..."
+    # Remove snap firefox if present (causes issues with VNC)
+    snap remove firefox 2>/dev/null || true
+    # Install from Mozilla PPA for latest version
+    add-apt-repository -y ppa:mozillateam/ppa 2>/dev/null || true
+    # Prefer PPA over snap
+    cat > /etc/apt/preferences.d/mozilla-firefox <<'MOZPREF'
+Package: *
+Pin: release o=LP-PPA-mozillateam
+Pin-Priority: 1001
+MOZPREF
+    apt-get update -qq
+    apt-get install -y -qq firefox
+    echo "[openclaw-setup] Firefox installed."
+fi
 
 # ============================================================
 # 3. Install Node.js 22
@@ -166,11 +195,48 @@ systemctl enable docker.service
 systemctl enable containerd.service
 
 # ============================================================
-# 5. Create openclaw user
+# 5. Install desktop environment (if --desktop)
+# ============================================================
+if [[ "${DESKTOP_MODE}" == "true" ]]; then
+    echo "[openclaw-setup] Installing XFCE desktop environment..."
+    apt-get install -y -qq \
+        xfce4 \
+        xfce4-terminal \
+        xfce4-goodies \
+        dbus-x11 \
+        x11-xserver-utils \
+        xfonts-base \
+        fonts-dejavu \
+        fonts-liberation \
+        gtk2-engines-pixbuf \
+        libxfce4ui-utils \
+        thunar \
+        mousepad \
+        lightdm \
+        lightdm-gtk-greeter
+    
+    # Configure auto-login for openclaw user
+    mkdir -p /etc/lightdm/lightdm.conf.d
+    cat > /etc/lightdm/lightdm.conf.d/50-openclaw-autologin.conf <<'LIGHTDM'
+[Seat:*]
+autologin-user=openclaw
+autologin-user-timeout=0
+user-session=xfce
+LIGHTDM
+    
+    echo "[openclaw-setup] Desktop environment installed."
+fi
+
+# ============================================================
+# 6. Create openclaw user
 # ============================================================
 echo "[openclaw-setup] Creating openclaw user..."
 useradd -r -m -s /bin/bash -d "${OPENCLAW_HOME}" "${OPENCLAW_USER}" 2>/dev/null || true
 usermod -aG docker "${OPENCLAW_USER}"
+# Add desktop groups if in desktop mode
+if [[ "${DESKTOP_MODE}" == "true" ]]; then
+    usermod -aG audio,video "${OPENCLAW_USER}" 2>/dev/null || true
+fi
 mkdir -p "${OPENCLAW_WORKSPACE}"
 chown -R "${OPENCLAW_USER}:${OPENCLAW_USER}" "${OPENCLAW_HOME}"
 
@@ -280,8 +346,71 @@ PUPPETEER_SKIP_DOWNLOAD=true
 
 NODE_ENV=production
 ENVFILE
+
+# Add DISPLAY for desktop mode
+if [[ "${DESKTOP_MODE}" == "true" ]]; then
+    echo "" >> "${OPENCLAW_HOME}/.env"
+    echo "# Desktop mode - X11 display" >> "${OPENCLAW_HOME}/.env"
+    echo "DISPLAY=:0" >> "${OPENCLAW_HOME}/.env"
+fi
+
 chown "${OPENCLAW_USER}:${OPENCLAW_USER}" "${OPENCLAW_HOME}/.env"
 chmod 600 "${OPENCLAW_HOME}/.env"
+
+# ============================================================
+# Desktop: Configure XFCE and browser settings
+# ============================================================
+if [[ "${DESKTOP_MODE}" == "true" ]]; then
+    echo "[openclaw-setup] Configuring desktop environment..."
+    
+    # Disable screensaver and screen lock
+    XFCE_CONFIG="${OPENCLAW_HOME}/.config/xfce4/xfconf/xfce-perchannel-xml"
+    mkdir -p "${XFCE_CONFIG}"
+    
+    cat > "${XFCE_CONFIG}/xfce4-screensaver.xml" <<'XFCESCREEN'
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfce4-screensaver" version="1.0">
+  <property name="saver" type="empty">
+    <property name="enabled" type="bool" value="false"/>
+  </property>
+  <property name="lock" type="empty">
+    <property name="enabled" type="bool" value="false"/>
+  </property>
+</channel>
+XFCESCREEN
+    
+    cat > "${XFCE_CONFIG}/xfce4-power-manager.xml" <<'XFCEPOWER'
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfce4-power-manager" version="1.0">
+  <property name="xfce4-power-manager" type="empty">
+    <property name="dpms-enabled" type="bool" value="false"/>
+    <property name="blank-on-ac" type="int" value="0"/>
+  </property>
+</channel>
+XFCEPOWER
+    
+    chown -R "${OPENCLAW_USER}:${OPENCLAW_USER}" "${OPENCLAW_HOME}/.config"
+    
+    # Update OpenClaw config for desktop mode (real browser, not headless)
+    echo "[openclaw-setup] Configuring OpenClaw for desktop mode..."
+    python3 -c "
+import json
+config_path = '${OPENCLAW_JSON}'
+with open(config_path) as f:
+    config = json.load(f)
+config.setdefault('browser', {})
+config['browser']['enabled'] = True
+config['browser']['headless'] = False
+config['browser']['noSandbox'] = True
+config['browser']['executablePath'] = '/usr/bin/google-chrome'
+config['browser']['defaultProfile'] = 'openclaw'
+with open(config_path, 'w') as f:
+    json.dump(config, f, indent=2)
+    f.write('\n')
+"
+    
+    echo "[openclaw-setup] Desktop configured."
+fi
 
 # ============================================================
 # 9. Hardening — SSH (custom port + hardening) — BEFORE firewall!
@@ -343,6 +472,8 @@ if command -v ufw &>/dev/null; then
     ufw disable 2>/dev/null || true
     systemctl disable ufw 2>/dev/null || true
 fi
+
+echo "[openclaw-setup] Firewall: Opening SSH (${SSH_PORT}) only"
 
 cat > /etc/nftables.conf <<NFT
 #!/usr/sbin/nft -f
@@ -541,7 +672,38 @@ apparmor_parser -r /etc/apparmor.d/usr.bin.openclaw 2>/dev/null || \
 # ============================================================
 echo "[openclaw-setup] Creating systemd service..."
 OPENCLAW_BIN=$(which openclaw)
-cat > /etc/systemd/system/openclaw-gateway.service <<SVCFILE
+
+if [[ "${DESKTOP_MODE}" == "true" ]]; then
+    # Desktop mode: has DISPLAY set for real browser
+    cat > /etc/systemd/system/openclaw-gateway.service <<SVCFILE
+[Unit]
+Description=OpenClaw Gateway - AI Assistant (Desktop Mode)
+Documentation=https://docs.openclaw.ai
+After=network-online.target docker.service display-manager.service
+Wants=network-online.target docker.service
+
+[Service]
+Type=simple
+User=${OPENCLAW_USER}
+Group=${OPENCLAW_USER}
+WorkingDirectory=${OPENCLAW_HOME}
+EnvironmentFile=${OPENCLAW_HOME}/.env
+Environment=DISPLAY=:0
+# Fix for Node.js 22 IPv6 issues on some servers
+Environment=NODE_OPTIONS=--dns-result-order=ipv4first
+ExecStart=${OPENCLAW_BIN} gateway --port 18789 --bind loopback
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=openclaw
+
+[Install]
+WantedBy=multi-user.target
+SVCFILE
+else
+    # Server mode (original)
+    cat > /etc/systemd/system/openclaw-gateway.service <<SVCFILE
 [Unit]
 Description=OpenClaw Gateway - AI Assistant
 Documentation=https://docs.openclaw.ai
@@ -566,6 +728,7 @@ SyslogIdentifier=openclaw
 [Install]
 WantedBy=multi-user.target
 SVCFILE
+fi
 systemctl daemon-reload
 systemctl enable openclaw-gateway.service
 systemctl start openclaw-gateway.service
@@ -643,7 +806,51 @@ echo "0 3 * * * root /usr/local/bin/openclaw-backup" > /etc/cron.d/openclaw-back
 # 19. MOTD — CLI documentation on SSH login
 # ============================================================
 echo "[openclaw-setup] Setting up MOTD..."
-cat > /etc/motd <<MOTD
+
+if [[ "${DESKTOP_MODE}" == "true" ]]; then
+    # Desktop mode MOTD
+    cat > /etc/motd <<MOTD
+
+  ═══════════════════════════════════════════════════════════
+   OpenClaw Desktop - AI Assistant with Full GUI
+  ═══════════════════════════════════════════════════════════
+
+   DESKTOP ACCESS:
+
+   Use your VPS provider's VNC console to access the desktop.
+
+   The desktop auto-logs in as 'openclaw' user.
+   OpenClaw browser is visible - watch your AI work in real-time!
+
+  ═══════════════════════════════════════════════════════════
+   SETUP (3 simple steps):
+  ═══════════════════════════════════════════════════════════
+
+   1. Open VNC console from your provider's control panel
+
+   2. Add your API key:
+      su - openclaw -c "openclaw models auth add"
+
+   3. Verify everything works:
+      su - openclaw -c "openclaw health"
+
+  ═══════════════════════════════════════════════════════════
+   USEFUL COMMANDS
+  ═══════════════════════════════════════════════════════════
+
+   openclaw status         Check gateway status
+   openclaw doctor         Diagnose problems
+   openclaw logs -f        Live logs
+   openclaw-security-check Security audit
+
+  ═══════════════════════════════════════════════════════════
+   Docs: https://docs.openclaw.ai
+  ═══════════════════════════════════════════════════════════
+
+MOTD
+else
+    # Server mode MOTD (original)
+    cat > /etc/motd <<MOTD
 
   ═══════════════════════════════════════════════════════════
    OpenClaw AI Assistant - Ready to configure
@@ -684,6 +891,7 @@ cat > /etc/motd <<MOTD
   ═══════════════════════════════════════════════════════════
 
 MOTD
+fi
 
 # ============================================================
 # 20. Finalize
@@ -698,6 +906,12 @@ VPS_IP=${VPS_IP}
 SSH_PORT=${SSH_PORT}
 GATEWAY_TOKEN=${GATEWAY_TOKEN}
 CREDS
+
+if [[ "${DESKTOP_MODE}" == "true" ]]; then
+    cat >> /opt/openclaw-setup/.credentials <<CREDS
+DESKTOP_MODE=true
+CREDS
+fi
 chmod 600 /opt/openclaw-setup/.credentials
 
 echo ""
@@ -707,10 +921,23 @@ echo "[openclaw-setup] ============================================"
 echo "[openclaw-setup] VPS IP:         ${VPS_IP}"
 echo "[openclaw-setup] SSH Port:       ${SSH_PORT}"
 echo "[openclaw-setup] Gateway Token:  ${GATEWAY_TOKEN}"
+
+if [[ "${DESKTOP_MODE}" == "true" ]]; then
+    echo "[openclaw-setup] Mode:           Desktop (XFCE + real browsers)"
+fi
+
 echo "[openclaw-setup] ============================================"
 echo "[openclaw-setup]"
 echo "[openclaw-setup] IMPORTANT: SSH port changed to ${SSH_PORT}"
 echo "[openclaw-setup] Reconnect with: ssh -p ${SSH_PORT} root@${VPS_IP}"
+
+if [[ "${DESKTOP_MODE}" == "true" ]]; then
+    echo "[openclaw-setup]"
+    echo "[openclaw-setup] Desktop Access:"
+    echo "[openclaw-setup]   Use your VPS provider's VNC console"
+    echo "[openclaw-setup]   Desktop auto-logs in as 'openclaw' user"
+fi
+
 echo "[openclaw-setup]"
 echo "[openclaw-setup] Next steps (shown on login):"
 echo "[openclaw-setup]   1. Add your API key to /home/openclaw/.env"

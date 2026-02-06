@@ -10,9 +10,33 @@ One command. 7-layer security. **Your OpenClaw, locked down.**
 
 ## Quick Start
 
+### Server Mode (Default)
+
+Best for: VPS deployments, minimal resources, CLI-focused workflows.
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/RareCloudio/openclaw-setup/main/setup.sh | bash
 ```
+
+### Desktop Mode (GUI)
+
+Best for: Visual monitoring, watching your AI work in real-time, debugging.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/RareCloudio/openclaw-setup/main/setup.sh -o setup.sh
+chmod +x setup.sh
+sudo bash setup.sh --desktop
+```
+
+This adds:
+- XFCE desktop environment (lightweight)
+- Firefox + Chrome browsers (real GUI, not headless)
+- Auto-login as `openclaw` user
+- OpenClaw configured for visible browser (headless: false)
+
+**Access the desktop via your VPS provider's VNC console** (available in most control panels).
+
+---
 
 After setup, SSH is moved to port **41722**. Reconnect with:
 ```bash
@@ -35,10 +59,13 @@ The MOTD will show your Gateway Token and step-by-step instructions for adding y
 ## Options
 
 ```bash
-# Recommended: let the script generate a secure token
+# Server mode (default):
 bash setup.sh
 
-# Or provide your own secure token:
+# Desktop mode:
+bash setup.sh --desktop
+
+# Custom token and port:
 bash setup.sh --gateway-token "$(openssl rand -hex 32)" --ssh-port 41722
 ```
 
@@ -46,6 +73,7 @@ bash setup.sh --gateway-token "$(openssl rand -hex 32)" --ssh-port 41722
 |------|-------------|---------|
 | `--gateway-token` | Gateway auth token (alphanumeric, min 32 chars) | random 64-char hex |
 | `--ssh-port` | SSH port (1024-65535) | 41722 |
+| `--desktop` | Install desktop environment (XFCE + browsers) | disabled |
 
 ## Architecture
 
@@ -142,7 +170,8 @@ The full URL with token is shown in the MOTD when you SSH into the server.
 
 - Fresh Ubuntu 24.04 LTS VPS
 - Root access (SSH key recommended)
-- Minimum: 2 vCPU, 4GB RAM, 20GB disk
+- **Server mode:** 2 vCPU, 4GB RAM, 20GB disk
+- **Desktop mode:** 2 vCPU, 4-8GB RAM, 30GB disk
 
 ## Troubleshooting
 
@@ -156,6 +185,60 @@ su - openclaw -c "openclaw doctor"
 # Security audit?
 openclaw-security-check
 ```
+
+## Desktop Mode Details
+
+The `--desktop` flag adds a full Linux desktop for visual AI monitoring.
+
+### Server vs Desktop Comparison
+
+| Aspect | Server | Desktop |
+|--------|--------|---------|
+| Browser | Headless Chrome | Real Firefox + Chrome with GUI |
+| Access | SSH only | SSH + Provider VNC console |
+| Visibility | Logs only | Watch AI work in real-time |
+| Resources | 2-4GB RAM | 4-8GB RAM |
+| Desktop | None | XFCE |
+| Use case | Production, CI/CD | Development, demos, visual debugging |
+
+### How to Access the Desktop
+
+Use your **VPS provider's VNC console** (available in most provider control panels).
+
+The desktop auto-logs in as the `openclaw` user. When OpenClaw uses the browser, you'll see it open and work in real-time.
+
+### Desktop Architecture
+
+```
+┌─────────────────────────────────────────┐
+│         VPS Provider Console            │
+│         (VNC built into panel)          │
+└────────────────┬────────────────────────┘
+                 │
+                 ▼
+┌─────────────────────────────────────────┐
+│           Ubuntu Server + XFCE          │
+│  ┌───────────────────────────────────┐  │
+│  │         XFCE Desktop              │  │
+│  │  ┌─────────────┐ ┌─────────────┐  │  │
+│  │  │   Chrome    │ │   Firefox   │  │  │
+│  │  │  (visible)  │ │  (visible)  │  │  │
+│  │  └─────────────┘ └─────────────┘  │  │
+│  │                                   │  │
+│  │  OpenClaw Gateway (DISPLAY=:0)    │  │
+│  └───────────────────────────────────┘  │
+│                                         │
+│  LightDM → Auto-login as 'openclaw'     │
+└─────────────────────────────────────────┘
+```
+
+### Desktop Security
+
+The desktop setup maintains strong security:
+- No additional ports exposed (uses provider's built-in VNC)
+- SSH key-only authentication
+- fail2ban protects SSH
+- Same 7-layer security model as server setup
 
 ## Contributing
 
