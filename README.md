@@ -1,5 +1,16 @@
 # OpenClaw Secure VPS Setup
 
+**OpenClaw on your VPS, the right way.**
+
+A fully automated, non-interactive setup script that installs, configures, and hardens OpenClaw in one command. Built for developers who want their AI assistant running securely without spending hours on server configuration.
+
+✨ **Simplify.** Non-interactive installation — perfect for automation  
+🔧 **Automate.** Complete setup: Node.js, Docker, browsers, systemd service  
+🔐 **Secure.** 7-layer security hardening included  
+🖥️ **Optional.** Desktop mode for visual monitoring
+
+---
+
 **Stop exposing your AI assistant to the internet.**
 
 In January 2026, security researchers found [42,000+ OpenClaw instances](https://www.theregister.com/2026/02/02/openclaw_security_issues/) running with no authentication — API keys, conversations, and personal data wide open. This project fixes that.
