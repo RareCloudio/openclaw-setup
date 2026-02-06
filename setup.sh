@@ -408,7 +408,17 @@ with open(config_path, 'w') as f:
     json.dump(config, f, indent=2)
     f.write('\n')
 "
-    
+
+    # Set default resolution for VNC (1360x768 - laptop-style)
+    echo "[openclaw-setup] Setting default display resolution..."
+    cat > "${OPENCLAW_HOME}/.xprofile" <<'XPROFILE'
+#!/bin/bash
+# Set resolution for VNC display (laptop-style 1360x768)
+xrandr --output VGA-1 --mode 1360x768 2>/dev/null || true
+XPROFILE
+    chown "${OPENCLAW_USER}:${OPENCLAW_USER}" "${OPENCLAW_HOME}/.xprofile"
+    chmod +x "${OPENCLAW_HOME}/.xprofile"
+
     echo "[openclaw-setup] Desktop configured."
 fi
 

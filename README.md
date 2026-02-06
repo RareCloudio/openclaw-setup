@@ -33,6 +33,7 @@ This adds:
 - Firefox + Chrome browsers (real GUI, not headless)
 - Auto-login as `openclaw` user
 - OpenClaw configured for visible browser (headless: false)
+- Default resolution: 1360x768 (laptop-style, VNC-friendly)
 
 **Access the desktop via your VPS provider's VNC console** (available in most control panels).
 
