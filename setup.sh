@@ -215,14 +215,24 @@ if [[ "${DESKTOP_MODE}" == "true" ]]; then
         lightdm \
         lightdm-gtk-greeter
     
-    # Configure auto-login for openclaw user
+    # Configure LightDM (no autologin - user must enter password for security)
     mkdir -p /etc/lightdm/lightdm.conf.d
-    cat > /etc/lightdm/lightdm.conf.d/50-openclaw-autologin.conf <<'LIGHTDM'
+    cat > /etc/lightdm/lightdm.conf.d/50-openclaw.conf <<'LIGHTDM'
 [Seat:*]
-autologin-user=openclaw
-autologin-user-timeout=0
 user-session=xfce
+greeter-hide-users=false
+greeter-show-manual-login=false
 LIGHTDM
+
+    # Configure greeter appearance
+    mkdir -p /etc/lightdm
+    cat > /etc/lightdm/lightdm-gtk-greeter.conf <<'GREETER'
+[greeter]
+theme-name=Adwaita-dark
+icon-theme-name=Adwaita
+background=#1a1a2e
+user-background=false
+GREETER
 
     # Enable LightDM to start on boot
     systemctl enable lightdm 2>/dev/null || true
@@ -234,7 +244,8 @@ fi
 # 6. Create openclaw user
 # ============================================================
 echo "[openclaw-setup] Creating openclaw user..."
-useradd -r -m -s /bin/bash -d "${OPENCLAW_HOME}" "${OPENCLAW_USER}" 2>/dev/null || true
+# Use regular user (not -r system user) so it appears in login greeter
+useradd -m -s /bin/bash -d "${OPENCLAW_HOME}" "${OPENCLAW_USER}" 2>/dev/null || true
 usermod -aG docker "${OPENCLAW_USER}"
 # Add desktop groups if in desktop mode
 if [[ "${DESKTOP_MODE}" == "true" ]]; then
@@ -242,6 +253,12 @@ if [[ "${DESKTOP_MODE}" == "true" ]]; then
 fi
 mkdir -p "${OPENCLAW_WORKSPACE}"
 chown -R "${OPENCLAW_USER}:${OPENCLAW_USER}" "${OPENCLAW_HOME}"
+
+# Set user password if provided via environment (for VNC login in desktop mode)
+if [[ -n "${USER_PASSWORD:-}" ]]; then
+    echo "${OPENCLAW_USER}:${USER_PASSWORD}" | chpasswd
+    echo "[openclaw-setup] User password set for VNC login."
+fi
 
 # ============================================================
 # 6. Install OpenClaw
@@ -840,8 +857,10 @@ if [[ "${DESKTOP_MODE}" == "true" ]]; then
 
    Use your VPS provider's VNC console to access the desktop.
 
-   The desktop auto-logs in as 'openclaw' user.
-   OpenClaw browser is visible - watch your AI work in real-time!
+   Login: openclaw
+   Password: (same as your root password)
+
+   Watch your AI work in real-time in the browser!
 
   ═══════════════════════════════════════════════════════════
    SETUP (3 simple steps):
@@ -956,7 +975,7 @@ if [[ "${DESKTOP_MODE}" == "true" ]]; then
     echo "[openclaw-setup]"
     echo "[openclaw-setup] Desktop Access:"
     echo "[openclaw-setup]   Use your VPS provider's VNC console"
-    echo "[openclaw-setup]   Desktop auto-logs in as 'openclaw' user"
+    echo "[openclaw-setup]   Login as 'openclaw' with your root password"
 fi
 
 echo "[openclaw-setup]"
