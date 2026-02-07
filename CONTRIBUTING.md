@@ -8,7 +8,7 @@ In January 2026, security researchers found **42,000+ OpenClaw instances exposed
 
 ### Report Security Issues
 
-Found a vulnerability? Please **don't** open a public issue. Email security@rarecloud.io instead. We'll credit you in the fix.
+Found a vulnerability? Please **don't** open a public issue. Email hello@rarecloud.io instead. We'll credit you in the fix.
 
 ### Improve the Setup Script
 
@@ -27,7 +27,7 @@ The main file is `setup.sh`. Areas that need work:
 
 ## Before You Submit
 
-1. **Test on a fresh VPS** — Don't submit untested changes. Spin up a $5 VPS and verify it works.
+1. **Test your changes** — Don't submit untested changes. Verify everything works on a fresh Ubuntu 24.04 installation.
 2. **Keep it simple** — This script runs on people's servers. Complexity is the enemy of security.
 3. **Don't break SSH** — Users get locked out if SSH changes fail. Be extra careful here.
 
