@@ -528,8 +528,9 @@ if systemctl is-enabled --quiet ssh.socket 2>/dev/null; then
     systemctl mask ssh.socket 2>/dev/null || true
 fi
 
-# Now restart SSH service (which reads Port from sshd_config)
-echo "[openclaw-setup] Restarting SSH service on port ${SSH_PORT}..."
+# Enable and start SSH service (CRITICAL: must enable for SSH to work after reboot)
+echo "[openclaw-setup] Enabling and starting SSH service on port ${SSH_PORT}..."
+systemctl enable ssh.service 2>/dev/null || systemctl enable sshd.service 2>/dev/null || true
 systemctl restart ssh.service || systemctl restart sshd.service || systemctl restart ssh || systemctl restart sshd
 
 # Verify SSH is listening on new port before applying firewall
