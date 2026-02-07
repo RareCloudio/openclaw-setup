@@ -266,6 +266,14 @@ Priority areas:
 
 Found a vulnerability? Please report it privately — see [SECURITY.md](SECURITY.md).
 
+---
+
+## Sponsors & Maintainers
+
+This project is developed and sponsored by [RareCloud](https://rarecloud.io), providing secure cloud infrastructure across 11 global locations.
+
+Want OpenClaw without the setup? [Get a pre-hardened VPS](https://rarecloud.io) — deployed in seconds.
+
 ## License
 
 [MIT](LICENSE)
