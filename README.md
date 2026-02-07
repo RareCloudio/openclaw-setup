@@ -1,8 +1,8 @@
 # OpenClaw Secure VPS Setup
 
-**OpenClaw on your VPS, the right way.**
+**Host OpenClaw on your VPS, the right way.**
 
-A fully automated, non-interactive setup script that installs, configures, and hardens OpenClaw in one command. Built for developers who want their AI assistant running securely without spending hours on server configuration.
+A fully automated, non-interactive setup script that installs, configures, and hardens OpenClaw (formerly MoltBot/ClawdBot) in one command. Built for developers who want their self-hosted AI assistant running 24/7 securely — without spending hours on server configuration.
 
 ✨ **Simplify.** Non-interactive installation — perfect for automation
 🔧 **Automate.** Complete setup: Node.js, Docker, browsers, systemd service
@@ -15,15 +15,15 @@ A fully automated, non-interactive setup script that installs, configures, and h
 
 In January 2026, security researchers found [42,000+ OpenClaw instances](https://www.theregister.com/2026/02/02/openclaw_security_issues/) running with no authentication — API keys, conversations, and personal data wide open. This project fixes that.
 
-One command. 8-layer security. **Your OpenClaw, locked down.**
+One command. 8-layer security. **Your AI agent, locked down.**
 
-> **Want a pre-configured VPS?** Get OpenClaw ready-to-use at [rarecloud.io/openclaw-vps](https://rarecloud.io/openclaw-vps/) — no setup required.
+> **Looking for OpenClaw hosting without the hassle?** Get a pre-configured VPS at [rarecloud.io/openclaw-vps](https://rarecloud.io/openclaw-vps/) — deploy your AI assistant in seconds, no setup required.
 
 ## Quick Start
 
 ### Server Mode (Default)
 
-Best for: VPS deployments, minimal resources, CLI-focused workflows.
+Best for: OpenClaw VPS hosting 24/7, minimal resources, CLI-focused workflows.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/RareCloudio/openclaw-setup/main/setup.sh | bash
@@ -31,7 +31,7 @@ curl -fsSL https://raw.githubusercontent.com/RareCloudio/openclaw-setup/main/set
 
 ### Desktop Mode (GUI)
 
-Best for: Visual monitoring, watching your AI work in real-time, debugging.
+Best for: Visual AI agent monitoring, watching your AI work in real-time, debugging.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/RareCloudio/openclaw-setup/main/setup.sh -o setup.sh
@@ -275,7 +275,7 @@ Found a vulnerability? Please report it privately — see [SECURITY.md](SECURITY
 
 This project is developed and sponsored by [RareCloud](https://rarecloud.io), providing secure cloud infrastructure across 11 global locations.
 
-Want OpenClaw without the setup? [Get a pre-hardened VPS](https://rarecloud.io/openclaw-vps/) — deployed in seconds.
+Want OpenClaw hosting without the setup? [Get a pre-hardened VPS](https://rarecloud.io/openclaw-vps/) — your AI assistant deployed in seconds.
 
 ## License
 
