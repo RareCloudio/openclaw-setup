@@ -4,9 +4,9 @@
 
 A fully automated, non-interactive setup script that installs, configures, and hardens OpenClaw in one command. Built for developers who want their AI assistant running securely without spending hours on server configuration.
 
-✨ **Simplify.** Non-interactive installation — perfect for automation  
-🔧 **Automate.** Complete setup: Node.js, Docker, browsers, systemd service  
-🔐 **Secure.** 7-layer security hardening included  
+✨ **Simplify.** Non-interactive installation — perfect for automation
+🔧 **Automate.** Complete setup: Node.js, Docker, browsers, systemd service
+🔐 **Secure.** 8-layer security hardening included
 🖥️ **Optional.** Desktop mode for visual monitoring
 
 ---
@@ -15,7 +15,7 @@ A fully automated, non-interactive setup script that installs, configures, and h
 
 In January 2026, security researchers found [42,000+ OpenClaw instances](https://www.theregister.com/2026/02/02/openclaw_security_issues/) running with no authentication — API keys, conversations, and personal data wide open. This project fixes that.
 
-One command. 7-layer security. **Your OpenClaw, locked down.**
+One command. 8-layer security. **Your OpenClaw, locked down.**
 
 > **Want a pre-configured VPS?** Get OpenClaw ready-to-use at [rarecloud.io](https://rarecloud.io) — no setup required.
 
@@ -42,7 +42,7 @@ sudo bash setup.sh --desktop
 This adds:
 - XFCE desktop environment (lightweight)
 - Firefox + Chrome browsers (real GUI, not headless)
-- Auto-login as `openclaw` user
+- VNC login required (user: `openclaw`, password: your root password)
 - OpenClaw configured for visible browser (headless: false)
 - Default resolution: 1360x768 (laptop-style, VNC-friendly)
 
@@ -106,7 +106,7 @@ Internet --> SSH (port 41722) --> CLI access to OpenClaw
 - **SSH + CLI commands** (primary method)
 - **SSH tunnel for WebUI** (optional): `ssh -p 41722 -L 18789:127.0.0.1:18789 root@server`
 
-## 7-Layer Security Model
+## 8-Layer Security Model
 
 | Layer | What | Why |
 |-------|------|-----|
@@ -117,6 +117,7 @@ Internet --> SSH (port 41722) --> CLI access to OpenClaw
 | 5. AppArmor | Kernel-level process confinement | Restricts what OpenClaw can access |
 | 6. Docker sandbox | Agent code runs in isolated containers | cap_drop ALL, resource limits |
 | 7. systemd | NoNewPrivileges, ProtectSystem, PrivateTmp | OS-level isolation |
+| 8. VNC login | No autologin, password required | Second factor for desktop access |
 
 No WebUI exposure eliminates the attack surface from the 42,000+ exposed instances found in January 2026.
 
@@ -217,7 +218,7 @@ The `--desktop` flag adds a full Linux desktop for visual AI monitoring.
 
 Use your **VPS provider's VNC console** (available in most provider control panels).
 
-The desktop auto-logs in as the `openclaw` user. When OpenClaw uses the browser, you'll see it open and work in real-time.
+Log in as the `openclaw` user (password is your root password). When OpenClaw uses the browser, you'll see it open and work in real-time.
 
 ### Desktop Architecture
 
@@ -240,17 +241,18 @@ The desktop auto-logs in as the `openclaw` user. When OpenClaw uses the browser,
 │  │  OpenClaw Gateway (DISPLAY=:0)    │  │
 │  └───────────────────────────────────┘  │
 │                                         │
-│  LightDM → Auto-login as 'openclaw'     │
+│  LightDM → Login as 'openclaw' (password) │
 └─────────────────────────────────────────┘
 ```
 
 ### Desktop Security
 
 The desktop setup maintains strong security:
+- **VNC login required** — no autologin, must enter password
 - No additional ports exposed (uses provider's built-in VNC)
 - SSH key-only authentication
 - fail2ban protects SSH
-- Same 7-layer security model as server setup
+- Full 8-layer security model (including Layer 8: VNC login)
 
 ## Contributing
 
