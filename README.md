@@ -42,7 +42,7 @@ sudo bash setup.sh --desktop
 This adds:
 - XFCE desktop environment (lightweight)
 - Firefox + Chrome browsers (real GUI, not headless)
-- VNC login required (user: `openclaw`, password: your root password)
+- Auto-login + screen lock (desktop starts, but locks immediately for security)
 - OpenClaw configured for visible browser (headless: false)
 - Default resolution: 1360x768 (laptop-style, VNC-friendly)
 
@@ -117,7 +117,7 @@ Internet --> SSH (port 41722) --> CLI access to OpenClaw
 | 5. AppArmor | Kernel-level process confinement | Restricts what OpenClaw can access |
 | 6. Docker sandbox | Agent code runs in isolated containers | cap_drop ALL, resource limits |
 | 7. systemd | NoNewPrivileges, ProtectSystem, PrivateTmp | OS-level isolation |
-| 8. VNC login | No autologin, password required | Second factor for desktop access |
+| 8. Screen lock | Desktop auto-locks after login | VNC viewers must enter password |
 
 No WebUI exposure eliminates the attack surface from the 42,000+ exposed instances found in January 2026.
 
@@ -218,7 +218,7 @@ The `--desktop` flag adds a full Linux desktop for visual AI monitoring.
 
 Use your **VPS provider's VNC console** (available in most provider control panels).
 
-Log in as the `openclaw` user (password is your root password). When OpenClaw uses the browser, you'll see it open and work in real-time.
+The desktop auto-logs in but immediately locks. Enter your password (same as root password) to unlock. When OpenClaw uses the browser, you'll see it open and work in real-time.
 
 ### Desktop Architecture
 
@@ -241,18 +241,19 @@ Log in as the `openclaw` user (password is your root password). When OpenClaw us
 │  │  OpenClaw Gateway (DISPLAY=:0)    │  │
 │  └───────────────────────────────────┘  │
 │                                         │
-│  LightDM → Login as 'openclaw' (password) │
+│  LightDM → Autologin → Screen Lock        │
 └─────────────────────────────────────────┘
 ```
 
 ### Desktop Security
 
 The desktop setup maintains strong security:
-- **VNC login required** — no autologin, must enter password
+- **Screen lock on login** — desktop auto-starts but locks immediately
+- OpenClaw works in background while screen is locked
+- VNC viewers must enter password to interact
 - No additional ports exposed (uses provider's built-in VNC)
 - SSH key-only authentication
-- fail2ban protects SSH
-- Full 8-layer security model (including Layer 8: VNC login)
+- Full 8-layer security model (Layer 8: screen lock)
 
 ## Contributing
 

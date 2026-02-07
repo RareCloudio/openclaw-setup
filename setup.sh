@@ -15,7 +15,7 @@
 #   - Access via SSH + CLI commands
 #   - Optional: SSH tunnel for Control UI (http://localhost:18789)
 #
-# Security: 7-layer hardening model
+# Security: 8-layer hardening model
 #   1. nftables firewall (custom SSH port ONLY)
 #   2. fail2ban (SSH brute-force protection)
 #   3. SSH hardening (key-only auth, no password)
@@ -23,6 +23,7 @@
 #   5. AppArmor process confinement
 #   6. Docker sandbox (agent code execution isolation)
 #   7. systemd hardening (NoNewPrivileges, ProtectSystem, etc.)
+#   8. VNC screen lock (desktop auto-locks, password required)
 
 set -euo pipefail
 
@@ -213,18 +214,21 @@ if [[ "${DESKTOP_MODE}" == "true" ]]; then
         thunar \
         mousepad \
         lightdm \
-        lightdm-gtk-greeter
-    
-    # Configure LightDM (no autologin - user must enter password for security)
+        lightdm-gtk-greeter \
+        light-locker
+
+    # Configure LightDM with autologin (desktop needs to start for OpenClaw)
+    # Security layer 8: screen locks immediately after login
     mkdir -p /etc/lightdm/lightdm.conf.d
     cat > /etc/lightdm/lightdm.conf.d/50-openclaw.conf <<'LIGHTDM'
 [Seat:*]
+autologin-user=openclaw
+autologin-user-timeout=0
 user-session=xfce
 greeter-hide-users=false
-greeter-show-manual-login=false
 LIGHTDM
 
-    # Configure greeter appearance
+    # Configure greeter appearance (for unlock screen)
     mkdir -p /etc/lightdm
     cat > /etc/lightdm/lightdm-gtk-greeter.conf <<'GREETER'
 [greeter]
@@ -439,7 +443,37 @@ XPROFILE
     chown "${OPENCLAW_USER}:${OPENCLAW_USER}" "${OPENCLAW_HOME}/.xprofile"
     chmod +x "${OPENCLAW_HOME}/.xprofile"
 
-    echo "[openclaw-setup] Desktop configured."
+    # Security Layer 8: Screen lock after autologin
+    # Desktop auto-logs in so OpenClaw can use browser, but screen locks immediately
+    # User must enter password via VNC to interact with desktop
+    echo "[openclaw-setup] Configuring screen lock (security layer 8)..."
+    mkdir -p "${OPENCLAW_HOME}/.config/autostart"
+
+    # Autostart light-locker daemon
+    cat > "${OPENCLAW_HOME}/.config/autostart/light-locker.desktop" <<'LOCKER'
+[Desktop Entry]
+Type=Application
+Name=Light Locker
+Exec=light-locker --lock-on-lid --lock-on-suspend
+Hidden=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+LOCKER
+
+    # Lock screen 3 seconds after login
+    cat > "${OPENCLAW_HOME}/.config/autostart/lock-screen.desktop" <<'LOCK'
+[Desktop Entry]
+Type=Application
+Name=Lock Screen on Login
+Exec=sh -c "sleep 3 && light-locker-command -l"
+Hidden=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+LOCK
+
+    chown -R "${OPENCLAW_USER}:${OPENCLAW_USER}" "${OPENCLAW_HOME}/.config/autostart"
+
+    echo "[openclaw-setup] Desktop configured with screen lock."
 fi
 
 # ============================================================
