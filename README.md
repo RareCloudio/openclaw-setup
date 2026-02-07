@@ -17,7 +17,7 @@ In January 2026, security researchers found [42,000+ OpenClaw instances](https:/
 
 One command. 8-layer security. **Your OpenClaw, locked down.**
 
-> **Want a pre-configured VPS?** Get OpenClaw ready-to-use at [rarecloud.io](https://rarecloud.io) — no setup required.
+> **Want a pre-configured VPS?** Get OpenClaw ready-to-use at [rarecloud.io/openclaw-vps](https://rarecloud.io/openclaw-vps/) — no setup required.
 
 ## Quick Start
 
@@ -275,7 +275,7 @@ Found a vulnerability? Please report it privately — see [SECURITY.md](SECURITY
 
 This project is developed and sponsored by [RareCloud](https://rarecloud.io), providing secure cloud infrastructure across 11 global locations.
 
-Want OpenClaw without the setup? [Get a pre-hardened VPS](https://rarecloud.io) — deployed in seconds.
+Want OpenClaw without the setup? [Get a pre-hardened VPS](https://rarecloud.io/openclaw-vps/) — deployed in seconds.
 
 ## License
 
