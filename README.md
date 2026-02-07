@@ -4,9 +4,9 @@
 
 A fully automated, non-interactive setup script that installs, configures, and hardens OpenClaw (formerly MoltBot/ClawdBot) in one command. Built for developers who want their self-hosted AI assistant running 24/7 securely — without spending hours on server configuration.
 
-✨ **Simplify.** Non-interactive installation — perfect for automation
-🔧 **Automate.** Complete setup: Node.js, Docker, browsers, systemd service
-🔐 **Secure.** 8-layer security hardening included
+✨ **Simplify.** Non-interactive installation — perfect for automation  
+🔧 **Automate.** Complete setup: Node.js, Docker, browsers, systemd service  
+🔐 **Secure.** 8-layer security hardening included  
 🖥️ **Optional.** Desktop mode for visual monitoring
 
 ---
