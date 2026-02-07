@@ -223,7 +223,10 @@ autologin-user=openclaw
 autologin-user-timeout=0
 user-session=xfce
 LIGHTDM
-    
+
+    # Enable LightDM to start on boot
+    systemctl enable lightdm 2>/dev/null || true
+
     echo "[openclaw-setup] Desktop environment installed."
 fi
 
@@ -755,6 +758,14 @@ for i in $(seq 1 30); do
 done
 if [[ "${GATEWAY_UP}" != "true" ]]; then
     echo "[openclaw-setup] WARNING: Gateway did not start within 60s. Check: journalctl -u openclaw-gateway"
+fi
+
+# Start LightDM for desktop mode (after gateway is ready)
+if [[ "${DESKTOP_MODE}" == "true" ]]; then
+    echo "[openclaw-setup] Starting desktop environment..."
+    systemctl start lightdm
+    sleep 3
+    echo "[openclaw-setup] Desktop environment started."
 fi
 
 # ============================================================
