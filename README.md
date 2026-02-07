@@ -15,7 +15,7 @@ A fully automated, non-interactive setup script that installs, configures, and h
 
 In January 2026, security researchers found [42,000+ OpenClaw instances](https://www.theregister.com/2026/02/02/openclaw_security_issues/) running with no authentication — API keys, conversations, and personal data wide open. This project fixes that.
 
-One command. 8-layer security. **Your AI agent, locked down.**
+One command. 8-layer security. **Your OpenClaw, locked down.**
 
 > **Looking for OpenClaw hosting without the hassle?** Get a pre-configured VPS at [rarecloud.io/openclaw-vps](https://rarecloud.io/openclaw-vps/) — deploy your AI assistant in seconds, no setup required.
 
@@ -23,7 +23,7 @@ One command. 8-layer security. **Your AI agent, locked down.**
 
 ### Server Mode (Default)
 
-Best for: OpenClaw VPS hosting 24/7, minimal resources, CLI-focused workflows.
+Best for: OpenClaw VPS hosting, minimal resources, CLI-focused workflows.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/RareCloudio/openclaw-setup/main/setup.sh | bash
