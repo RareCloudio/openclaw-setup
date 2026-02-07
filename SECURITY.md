@@ -6,7 +6,7 @@ This project exists because OpenClaw deployments are frequently misconfigured an
 
 **Please do not open public issues for security vulnerabilities.**
 
-Email **security@rarecloud.io** with:
+Email **hello@rarecloud.io** with:
 
 - Description of the vulnerability
 - Steps to reproduce
@@ -32,17 +32,18 @@ This policy covers:
 
 ## Security Measures
 
-This script implements a 7-layer security model:
+This script implements an 8-layer security model:
 
 | Layer | Protection |
 |-------|------------|
 | 1 | nftables firewall — only SSH allowed inbound |
 | 2 | fail2ban — blocks brute-force attempts |
-| 3 | SSH hardening — key-only auth, custom port |
+| 3 | SSH hardening — key-only auth, custom port, DenyUsers |
 | 4 | Gateway token — 64-char authentication |
 | 5 | AppArmor — process confinement |
 | 6 | Docker sandbox — isolated agent execution |
 | 7 | systemd — privilege restrictions |
+| 8 | Screen lock — desktop auto-locks, password required via VNC |
 
 If you find a way to bypass any of these layers, we want to know.
 
