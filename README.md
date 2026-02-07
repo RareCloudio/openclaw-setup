@@ -112,7 +112,7 @@ Internet --> SSH (port 41722) --> CLI access to OpenClaw
 |-------|------|-----|
 | 1. nftables | Firewall: only custom SSH port open | Blocks all unauthorized access |
 | 2. fail2ban | Brute-force protection (SSH) | Auto-bans attackers |
-| 3. SSH hardening | Key-only auth, no password, custom port | Prevents brute-force |
+| 3. SSH hardening | Custom port, fail2ban, DenyUsers openclaw | Prevents brute-force |
 | 4. Gateway token | OpenClaw token auth (64-char hex) | API-level authentication |
 | 5. AppArmor | Kernel-level process confinement | Restricts what OpenClaw can access |
 | 6. Docker sandbox | Agent code runs in isolated containers | cap_drop ALL, resource limits |
@@ -252,7 +252,7 @@ The desktop setup maintains strong security:
 - OpenClaw works in background while screen is locked
 - VNC viewers must enter password to interact
 - No additional ports exposed (uses provider's built-in VNC)
-- SSH key-only authentication
+- SSH on custom port with fail2ban protection
 - Full 8-layer security model (Layer 8: screen lock)
 
 ## Contributing

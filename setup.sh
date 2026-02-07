@@ -500,8 +500,9 @@ sed -i "s/^#\?Port.*/Port ${SSH_PORT}/" /etc/ssh/sshd_config
 grep -q "^Port" /etc/ssh/sshd_config || echo "Port ${SSH_PORT}" >> /etc/ssh/sshd_config
 
 # Hardening settings
-sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config
-sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
+# Note: We keep password auth enabled for root because customers receive passwords from WHMCS
+# Security is maintained via: custom port, fail2ban, DenyUsers for openclaw
+sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
 
 # Prevent SSH access for openclaw user (defense against prompt injection persistence)
 grep -q "^DenyUsers" /etc/ssh/sshd_config || echo "DenyUsers ${OPENCLAW_USER}" >> /etc/ssh/sshd_config

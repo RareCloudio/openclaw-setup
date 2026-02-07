@@ -38,7 +38,7 @@ This script implements an 8-layer security model:
 |-------|------------|
 | 1 | nftables firewall — only SSH allowed inbound |
 | 2 | fail2ban — blocks brute-force attempts |
-| 3 | SSH hardening — key-only auth, custom port, DenyUsers |
+| 3 | SSH hardening — custom port, fail2ban, DenyUsers openclaw |
 | 4 | Gateway token — 64-char authentication |
 | 5 | AppArmor — process confinement |
 | 6 | Docker sandbox — isolated agent execution |
