@@ -443,6 +443,17 @@ XPROFILE
     chown "${OPENCLAW_USER}:${OPENCLAW_USER}" "${OPENCLAW_HOME}/.xprofile"
     chmod +x "${OPENCLAW_HOME}/.xprofile"
 
+    # Configure AccountsService to show user in greeter (not as system account)
+    echo "[openclaw-setup] Configuring AccountsService..."
+    mkdir -p /var/lib/AccountsService/users
+    cat > /var/lib/AccountsService/users/${OPENCLAW_USER} <<ACCT
+[User]
+SystemAccount=false
+Session=xfce
+Icon=/home/${OPENCLAW_USER}/.face
+ACCT
+    systemctl restart accounts-daemon 2>/dev/null || true
+
     # Security Layer 8: Screen lock after autologin
     # Desktop auto-logs in so OpenClaw can use browser, but screen locks immediately
     # User must enter password via VNC to interact with desktop
