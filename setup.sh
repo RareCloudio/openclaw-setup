@@ -270,6 +270,9 @@ fi
 echo "[openclaw-setup] Installing OpenClaw (latest)..."
 npm install -g openclaw@latest
 
+# Fix permissions so non-root users (openclaw) can run the CLI
+chmod -R o+rX "$(npm prefix -g)/lib/node_modules/openclaw"
+
 if ! command -v openclaw &>/dev/null; then
     echo "[openclaw-setup] ERROR: openclaw binary not found after install."
     exit 1
