@@ -169,11 +169,22 @@ MOZPREF
 fi
 
 # ============================================================
-# 3. Install Node.js 22
+# 3. Install Node.js 24
 # ============================================================
-echo "[openclaw-setup] Installing Node.js 22..."
-if ! command -v node &>/dev/null || [[ "$(node -v | cut -d'v' -f2 | cut -d'.' -f1)" -lt 22 ]]; then
-    curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+# OpenClaw >= 2026.9.3 requires Node >= 24.16.0 on the 24.x line (Node 22 and 25
+# are no longer supported; 24.22.1+ is recommended for security fixes).
+echo "[openclaw-setup] Installing Node.js 24..."
+NODE_VERSION_OK=false
+if command -v node &>/dev/null; then
+    NODE_VER="$(node -v | sed 's/^v//')"
+    NODE_MAJOR="${NODE_VER%%.*}"
+    NODE_MINOR="$(echo "${NODE_VER}" | cut -d'.' -f2)"
+    if [[ "${NODE_MAJOR}" -eq 24 && "${NODE_MINOR}" -ge 22 ]]; then
+        NODE_VERSION_OK=true
+    fi
+fi
+if [[ "${NODE_VERSION_OK}" != "true" ]]; then
+    curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
     apt-get install -y -qq nodejs
 fi
 echo "[openclaw-setup] Node.js $(node -v) installed."
@@ -268,7 +279,8 @@ fi
 # 6. Install OpenClaw
 # ============================================================
 echo "[openclaw-setup] Installing OpenClaw (latest)..."
-npm install -g openclaw@latest
+# npm 11.16+ (bundled with Node 24) only runs install scripts for allowed packages.
+npm install -g openclaw@latest --allow-scripts=openclaw
 
 # Fix permissions so non-root users (openclaw) can run the CLI
 chmod -R o+rX "$(npm prefix -g)/lib/node_modules/openclaw"
@@ -279,9 +291,21 @@ if ! command -v openclaw &>/dev/null; then
 fi
 echo "[openclaw-setup] OpenClaw $(openclaw --version) installed."
 
-# Pre-pull sandbox Docker image
-echo "[openclaw-setup] Pre-pulling sandbox image..."
-docker pull node:22-bookworm-slim || echo "[openclaw-setup] WARNING: Could not pre-pull sandbox image."
+# Build the default sandbox Docker image (openclaw-sandbox:trixie-slim).
+# OpenClaw does not fall back to a plain base image when it is missing, and the
+# npm package does not ship the build script, so build it here (official recipe).
+echo "[openclaw-setup] Building sandbox image openclaw-sandbox:trixie-slim..."
+docker build -t openclaw-sandbox:trixie-slim - <<'DOCKERFILE' >/dev/null || echo "[openclaw-setup] WARNING: Could not build sandbox image."
+FROM debian:trixie-slim
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+  bash ca-certificates curl git jq python3 ripgrep \
+  && rm -rf /var/lib/apt/lists/*
+RUN useradd --create-home --shell /bin/bash sandbox
+USER sandbox
+WORKDIR /home/sandbox
+CMD ["sleep", "infinity"]
+DOCKERFILE
 
 # ============================================================
 # 7. Configure OpenClaw (non-interactive onboard)
@@ -302,13 +326,15 @@ su - "${OPENCLAW_USER}" -c "openclaw onboard \
     --skip-health \
     --skip-ui" 2>&1 || true
 
-# Enable channel plugins
-echo "[openclaw-setup] Enabling channel plugins..."
-su - "${OPENCLAW_USER}" -c "openclaw plugins enable whatsapp" 2>&1 || true
+# Channel plugins
+# Telegram is bundled. WhatsApp, Discord, Slack and Signal ship as external
+# plugins since 2026.5: `plugins enable` alone does nothing for them. WhatsApp is
+# pre-installed (most common); the others are installed on demand by
+# `openclaw channels add` / `openclaw onboard` the first time they are selected.
+echo "[openclaw-setup] Setting up channel plugins..."
 su - "${OPENCLAW_USER}" -c "openclaw plugins enable telegram" 2>&1 || true
-su - "${OPENCLAW_USER}" -c "openclaw plugins enable discord" 2>&1 || true
-su - "${OPENCLAW_USER}" -c "openclaw plugins enable slack" 2>&1 || true
-su - "${OPENCLAW_USER}" -c "openclaw plugins enable signal" 2>&1 || true
+su - "${OPENCLAW_USER}" -c "openclaw plugins install @openclaw/whatsapp" 2>&1 || \
+    echo "[openclaw-setup] WARNING: Could not install WhatsApp plugin (it will be offered on first 'openclaw channels add')."
 
 # Create credentials directory
 mkdir -p "${OPENCLAW_CONFIG_DIR}/credentials"
@@ -772,11 +798,18 @@ Group=${OPENCLAW_USER}
 WorkingDirectory=${OPENCLAW_HOME}
 EnvironmentFile=${OPENCLAW_HOME}/.env
 Environment=DISPLAY=:0
-# Fix for Node.js 22 IPv6 issues on some servers
+# Prefer IPv4 DNS results (avoids IPv6 connectivity issues on some servers)
 Environment=NODE_OPTIONS=--dns-result-order=ipv4first
+# This system unit owns the gateway lifecycle: stop 'openclaw doctor --fix' from
+# installing a competing systemd *user* service for the same port.
+Environment=OPENCLAW_SERVICE_REPAIR_POLICY=external
 ExecStart=${OPENCLAW_BIN} gateway --port 18789 --bind loopback
 Restart=always
 RestartSec=10
+# Exit code 78 = invalid config: don't restart-loop until the config is fixed.
+RestartPreventExitStatus=78
+# First start runs database migrations and plugin preparation.
+TimeoutStartSec=300
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=openclaw
@@ -799,11 +832,18 @@ User=${OPENCLAW_USER}
 Group=${OPENCLAW_USER}
 WorkingDirectory=${OPENCLAW_HOME}
 EnvironmentFile=${OPENCLAW_HOME}/.env
-# Fix for Node.js 22 IPv6 issues on some servers
+# Prefer IPv4 DNS results (avoids IPv6 connectivity issues on some servers)
 Environment=NODE_OPTIONS=--dns-result-order=ipv4first
+# This system unit owns the gateway lifecycle: stop 'openclaw doctor --fix' from
+# installing a competing systemd *user* service for the same port.
+Environment=OPENCLAW_SERVICE_REPAIR_POLICY=external
 ExecStart=${OPENCLAW_BIN} gateway --port 18789 --bind loopback
 Restart=always
 RestartSec=10
+# Exit code 78 = invalid config: don't restart-loop until the config is fixed.
+RestartPreventExitStatus=78
+# First start runs database migrations and plugin preparation.
+TimeoutStartSec=300
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=openclaw
@@ -818,7 +858,9 @@ systemctl start openclaw-gateway.service
 
 echo "[openclaw-setup] Waiting for gateway to start..."
 GATEWAY_UP=false
-for i in $(seq 1 30); do
+# Recent OpenClaw releases can take 1-2 minutes on first start (plugin and
+# SQLite preparation), so wait up to 3 minutes.
+for i in $(seq 1 90); do
     if curl -sf http://127.0.0.1:18789/ >/dev/null 2>&1; then
         echo "[openclaw-setup] Gateway is running."
         GATEWAY_UP=true
@@ -827,7 +869,7 @@ for i in $(seq 1 30); do
     sleep 2
 done
 if [[ "${GATEWAY_UP}" != "true" ]]; then
-    echo "[openclaw-setup] WARNING: Gateway did not start within 60s. Check: journalctl -u openclaw-gateway"
+    echo "[openclaw-setup] WARNING: Gateway did not start within 180s. Check: journalctl -u openclaw-gateway"
 fi
 
 # Start LightDM for desktop mode (after gateway is ready)
@@ -855,6 +897,36 @@ echo "=== Logs (last 20) ==="
 journalctl -u openclaw-gateway -n 20 --no-pager
 HELPER
 chmod +x /usr/local/bin/openclaw-status
+
+cat > /usr/local/bin/openclaw-update <<'HELPER'
+#!/bin/bash
+# Update OpenClaw + its external plugins safely (run as root).
+# Usage: openclaw-update [version]   (default: latest)
+set -euo pipefail
+VERSION="${1:-latest}"
+echo "[openclaw-update] Stopping gateway (for a consistent backup)..."
+systemctl stop openclaw-gateway
+echo "[openclaw-update] Backing up first..."
+if ! /usr/local/bin/openclaw-backup; then
+    echo "[openclaw-update] ERROR: backup failed, aborting update. Restarting gateway."
+    systemctl start openclaw-gateway
+    exit 1
+fi
+echo "[openclaw-update] Installing openclaw@${VERSION}..."
+npm install -g "openclaw@${VERSION}" --allow-scripts=openclaw
+chmod -R o+rX "$(npm prefix -g)/lib/node_modules/openclaw"
+echo "[openclaw-update] Running migrations (doctor --fix)..."
+# Doctor may need a second pass to finish multi-step migrations.
+su - openclaw -c "openclaw doctor --fix --non-interactive" || \
+    su - openclaw -c "openclaw doctor --fix --non-interactive" || true
+echo "[openclaw-update] Updating plugins to match core..."
+su - openclaw -c "openclaw plugins update --all" || true
+echo "[openclaw-update] Starting gateway (first start can take 1-2 minutes)..."
+systemctl start openclaw-gateway
+su - openclaw -c "openclaw --version"
+echo "[openclaw-update] Done. Check: openclaw-status"
+HELPER
+chmod +x /usr/local/bin/openclaw-update
 
 cat > /usr/local/bin/openclaw-backup <<'HELPER'
 #!/bin/bash
@@ -935,6 +1007,7 @@ if [[ "${DESKTOP_MODE}" == "true" ]]; then
    openclaw doctor         Diagnose problems
    openclaw logs -f        Live logs
    openclaw-security-check Security audit
+   openclaw-update         Update OpenClaw safely (backup + migrations)
 
   ═══════════════════════════════════════════════════════════
    Docs: https://docs.openclaw.ai
@@ -968,6 +1041,7 @@ else
    openclaw doctor         Diagnose problems
    openclaw logs -f        Live logs
    openclaw-security-check Security audit
+   openclaw-update         Update OpenClaw safely (backup + migrations)
 
   ═══════════════════════════════════════════════════════════
    OPTIONAL: Web UI (from your computer)

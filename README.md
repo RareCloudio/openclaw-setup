@@ -59,10 +59,10 @@ The MOTD will show your Gateway Token and step-by-step instructions for adding y
 
 ## What It Does
 
-1. **Installs** Node.js 22, Docker, headless Chrome
+1. **Installs** Node.js 24, Docker, headless Chrome
 2. **Installs** OpenClaw (latest version via npm)
 3. **Configures** OpenClaw gateway on loopback:18789 (not exposed)
-4. **Enables** channel plugins (WhatsApp, Telegram, Discord, Slack, Signal)
+4. **Sets up** channel plugins (Telegram + WhatsApp pre-installed; Discord, Slack, Signal installed on demand)
 5. **Hardens** the entire system (see Security below)
 6. **Changes** SSH to custom port (41722 by default)
 7. **Creates** systemd service, helper commands, daily backups
@@ -153,6 +153,7 @@ su - openclaw -c "openclaw health"
 openclaw-status          # Check gateway status, health, recent logs
 openclaw-security-check  # Run full security audit (11 checks)
 openclaw-backup          # Create backup (auto-runs daily at 3 AM)
+openclaw-update          # Update OpenClaw safely (backup, migrations, plugins)
 ```
 
 ## Optional: WebUI via SSH Tunnel
