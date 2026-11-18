@@ -172,7 +172,7 @@ fi
 # 3. Install Node.js 24
 # ============================================================
 # OpenClaw >= 2026.9.3 requires Node >= 24.16.0 on the 24.x line (Node 22 and 25
-# are no longer supported; 24.22.1+ is recommended for security fixes).
+# are no longer supported). We install/keep 24.22+ (security fixes since 24.22.1).
 echo "[openclaw-setup] Installing Node.js 24..."
 NODE_VERSION_OK=false
 if command -v node &>/dev/null; then
@@ -186,6 +186,10 @@ fi
 if [[ "${NODE_VERSION_OK}" != "true" ]]; then
     curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
     apt-get install -y -qq nodejs
+fi
+if ! node -e 'const [a,b]=process.versions.node.split(".").map(Number); process.exit(a===24&&b>=16?0:1)'; then
+    echo "[openclaw-setup] ERROR: Node.js $(node -v 2>/dev/null || echo missing) does not satisfy OpenClaw (needs 24.16+)."
+    exit 1
 fi
 echo "[openclaw-setup] Node.js $(node -v) installed."
 
@@ -295,7 +299,7 @@ echo "[openclaw-setup] OpenClaw $(openclaw --version) installed."
 # OpenClaw does not fall back to a plain base image when it is missing, and the
 # npm package does not ship the build script, so build it here (official recipe).
 echo "[openclaw-setup] Building sandbox image openclaw-sandbox:trixie-slim..."
-docker build -t openclaw-sandbox:trixie-slim - <<'DOCKERFILE' >/dev/null || echo "[openclaw-setup] WARNING: Could not build sandbox image."
+timeout 900 docker build -t openclaw-sandbox:trixie-slim - <<'DOCKERFILE' >/dev/null || echo "[openclaw-setup] WARNING: Could not build sandbox image."
 FROM debian:trixie-slim
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -333,7 +337,7 @@ su - "${OPENCLAW_USER}" -c "openclaw onboard \
 # `openclaw channels add` / `openclaw onboard` the first time they are selected.
 echo "[openclaw-setup] Setting up channel plugins..."
 su - "${OPENCLAW_USER}" -c "openclaw plugins enable telegram" 2>&1 || true
-su - "${OPENCLAW_USER}" -c "openclaw plugins install @openclaw/whatsapp" 2>&1 || \
+timeout 600 su - "${OPENCLAW_USER}" -c "openclaw plugins install @openclaw/whatsapp" </dev/null 2>&1 || \
     echo "[openclaw-setup] WARNING: Could not install WhatsApp plugin (it will be offered on first 'openclaw channels add')."
 
 # Create credentials directory
@@ -808,8 +812,9 @@ Restart=always
 RestartSec=10
 # Exit code 78 = invalid config: don't restart-loop until the config is fixed.
 RestartPreventExitStatus=78
-# First start runs database migrations and plugin preparation.
-TimeoutStartSec=300
+# Give the gateway time to drain in-flight turns on stop (matches upstream unit).
+TimeoutStopSec=330
+KillMode=mixed
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=openclaw
@@ -842,8 +847,9 @@ Restart=always
 RestartSec=10
 # Exit code 78 = invalid config: don't restart-loop until the config is fixed.
 RestartPreventExitStatus=78
-# First start runs database migrations and plugin preparation.
-TimeoutStartSec=300
+# Give the gateway time to drain in-flight turns on stop (matches upstream unit).
+TimeoutStopSec=330
+KillMode=mixed
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=openclaw
@@ -861,7 +867,7 @@ GATEWAY_UP=false
 # Recent OpenClaw releases can take 1-2 minutes on first start (plugin and
 # SQLite preparation), so wait up to 3 minutes.
 for i in $(seq 1 90); do
-    if curl -sf http://127.0.0.1:18789/ >/dev/null 2>&1; then
+    if curl -sf --max-time 5 http://127.0.0.1:18789/ >/dev/null 2>&1; then
         echo "[openclaw-setup] Gateway is running."
         GATEWAY_UP=true
         break
@@ -902,43 +908,129 @@ cat > /usr/local/bin/openclaw-update <<'HELPER'
 #!/bin/bash
 # Update OpenClaw + its external plugins safely (run as root).
 # Usage: openclaw-update [version]   (default: latest)
+# Everything that can fail cheaply (bad version, registry down, Node too old) is
+# checked BEFORE the gateway is stopped. Once stopped, the gateway is always
+# started again, and a failed npm install rolls back to the previous version.
 set -euo pipefail
+log() { echo "[openclaw-update] $*"; }
+
+case "${1:-}" in
+    -h|--help) echo "Usage: openclaw-update [version]   (default: latest)"; exit 0 ;;
+esac
+if [[ ${EUID} -ne 0 ]]; then log "ERROR: run as root."; exit 1; fi
 VERSION="${1:-latest}"
-echo "[openclaw-update] Stopping gateway (for a consistent backup)..."
-systemctl stop openclaw-gateway
-echo "[openclaw-update] Backing up first..."
-if ! /usr/local/bin/openclaw-backup; then
-    echo "[openclaw-update] ERROR: backup failed, aborting update. Restarting gateway."
-    systemctl start openclaw-gateway
+if [[ ! "${VERSION}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+    log "ERROR: invalid version '${VERSION}'."; exit 1
+fi
+
+NPM_ROOT="$(npm root -g)"
+OLD_VERSION="$(node -p "require('${NPM_ROOT}/openclaw/package.json').version" 2>/dev/null || true)"
+TARGET="$(npm view "openclaw@${VERSION}" version 2>/dev/null | tail -n 1 | tr -d "' " || true)"
+if [[ -z "${TARGET}" ]]; then
+    log "ERROR: openclaw@${VERSION} not found (or npm registry unreachable). Nothing changed."
     exit 1
 fi
-echo "[openclaw-update] Installing openclaw@${VERSION}..."
-npm install -g "openclaw@${VERSION}" --allow-scripts=openclaw
-chmod -R o+rX "$(npm prefix -g)/lib/node_modules/openclaw"
-echo "[openclaw-update] Running migrations (doctor --fix)..."
-# Doctor may need a second pass to finish multi-step migrations.
-su - openclaw -c "openclaw doctor --fix --non-interactive" || \
-    su - openclaw -c "openclaw doctor --fix --non-interactive" || true
-echo "[openclaw-update] Updating plugins to match core..."
-su - openclaw -c "openclaw plugins update --all" || true
-echo "[openclaw-update] Starting gateway (first start can take 1-2 minutes)..."
+if [[ "${TARGET}" == "${OLD_VERSION}" ]]; then
+    log "Already on openclaw ${TARGET}. Nothing to do."
+    exit 0
+fi
+NODE_RANGE="$(npm view "openclaw@${TARGET}" engines.node 2>/dev/null || true)"
+if [[ -n "${NODE_RANGE}" ]] && [[ -f "${NPM_ROOT}/npm/node_modules/semver/index.js" ]]; then
+    if ! node -e "process.exit(require('${NPM_ROOT}/npm/node_modules/semver').satisfies(process.version, process.argv[1]) ? 0 : 1)" "${NODE_RANGE}"; then
+        log "ERROR: openclaw ${TARGET} needs Node ${NODE_RANGE}, this server has $(node -v)."
+        log "Upgrade Node first (NodeSource), then rerun. Nothing changed."
+        exit 1
+    fi
+fi
+log "Updating openclaw ${OLD_VERSION:-?} -> ${TARGET}"
+
+start_gateway() { systemctl start openclaw-gateway || true; }
+trap 'log "Aborted - starting gateway again."; start_gateway' EXIT
+
+log "Stopping gateway (for a consistent backup)..."
+systemctl stop openclaw-gateway
+log "Backing up first..."
+if ! /usr/local/bin/openclaw-backup; then
+    log "ERROR: backup failed, aborting update (OpenClaw untouched)."
+    exit 1
+fi
+
+log "Installing openclaw@${TARGET}..."
+if ! npm install -g "openclaw@${TARGET}" --allow-scripts=openclaw; then
+    log "ERROR: npm install failed."
+    if [[ -n "${OLD_VERSION}" ]]; then
+        log "Rolling back to openclaw@${OLD_VERSION}..."
+        npm install -g "openclaw@${OLD_VERSION}" --allow-scripts=openclaw || log "ERROR: rollback failed too - see backups in /var/backups/openclaw."
+        chmod -R o+rX "${NPM_ROOT}/openclaw" || true
+    fi
+    exit 1
+fi
+chmod -R o+rX "${NPM_ROOT}/openclaw"
+
+# The system unit owns the gateway; tell doctor not to install a user service.
+DOCTOR="OPENCLAW_SERVICE_REPAIR_POLICY=external openclaw doctor --fix --non-interactive"
+log "Running migrations (doctor --fix, two passes: some migrations finish on the second)..."
+su - openclaw -c "${DOCTOR}" || true
+DOCTOR_OK=true
+su - openclaw -c "${DOCTOR}" || DOCTOR_OK=false
+log "Updating plugins to match core..."
+PLUGINS_OK=true
+su - openclaw -c "openclaw plugins update --all" || PLUGINS_OK=false
+
+trap - EXIT
+log "Starting gateway (first start can take 1-2 minutes)..."
 systemctl start openclaw-gateway
-su - openclaw -c "openclaw --version"
-echo "[openclaw-update] Done. Check: openclaw-status"
+for _ in $(seq 1 90); do
+    if curl -sf --max-time 5 http://127.0.0.1:18789/ >/dev/null 2>&1; then
+        log "Gateway is up on openclaw $(su - openclaw -c 'openclaw --version' 2>/dev/null || echo "${TARGET}")."
+        [[ "${DOCTOR_OK}" == "true" ]] || log "WARNING: doctor --fix reported problems - run: su - openclaw -c 'openclaw doctor'"
+        [[ "${PLUGINS_OK}" == "true" ]] || log "WARNING: plugin update failed - run: su - openclaw -c 'openclaw plugins update --all'"
+        log "Done. Check: openclaw-status"
+        exit 0
+    fi
+    case "$(systemctl show -p ActiveState --value openclaw-gateway)" in
+        failed|inactive) break ;;   # e.g. exit 78 (invalid config) - no point waiting
+    esac
+    sleep 2
+done
+log "ERROR: gateway is not responding after the update."
+journalctl -u openclaw-gateway -n 30 --no-pager || true
+log "Diagnose: su - openclaw -c 'openclaw doctor'   |   Backups: /var/backups/openclaw"
+exit 1
 HELPER
 chmod +x /usr/local/bin/openclaw-update
 
 cat > /usr/local/bin/openclaw-backup <<'HELPER'
 #!/bin/bash
+# Back up OpenClaw state. Exits non-zero (and removes the partial archive) on failure.
+set -uo pipefail
 BACKUP_DIR="${1:-/var/backups/openclaw}"
 DATE=$(date +%Y%m%d-%H%M%S)
-mkdir -p "$BACKUP_DIR"
-tar -czf "$BACKUP_DIR/openclaw-$DATE.tar.gz" \
-    /home/openclaw/.openclaw /home/openclaw/workspace /home/openclaw/.env 2>/dev/null
-echo "Backup: $BACKUP_DIR/openclaw-$DATE.tar.gz"
+FILE="$BACKUP_DIR/openclaw-$DATE.tar.gz"
+mkdir -p "$BACKUP_DIR" || exit 1
+PATHS=()
+for p in /home/openclaw/.openclaw /home/openclaw/workspace /home/openclaw/.env; do
+    [[ -e "$p" ]] && PATHS+=("$p")
+done
+# GNU tar: exit 1 = files changed while reading (normal with a live gateway),
+# exit 2 = fatal (disk full, unreadable archive target, ...).
+tar --warning=no-file-changed -czf "$FILE" "${PATHS[@]}"
+RC=$?
+if [[ $RC -gt 1 ]] || ! gzip -t "$FILE" 2>/dev/null; then
+    echo "Backup FAILED (tar exit $RC): $FILE" >&2
+    rm -f "$FILE"
+    exit 1
+fi
+echo "Backup: $FILE"
 ls -t "$BACKUP_DIR"/openclaw-*.tar.gz | tail -n +8 | xargs -r rm
+exit 0
 HELPER
 chmod +x /usr/local/bin/openclaw-backup
+
+# Doctor reads the service repair policy from its own environment, not from the
+# unit: export it for the openclaw user's login shells too (manual 'openclaw doctor').
+echo 'export OPENCLAW_SERVICE_REPAIR_POLICY=external' > /etc/profile.d/openclaw.sh
+chmod 644 /etc/profile.d/openclaw.sh
 
 cat > /usr/local/bin/openclaw-security-check <<HELPER
 #!/bin/bash
